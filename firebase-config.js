@@ -8,13 +8,15 @@
  * No requiere build step: se sube tal cual a GitHub Pages.
  */
 
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
-  apiKey: "TU_API_KEY",
-  authDomain: "TU_PROYECTO.firebaseapp.com",
-  projectId: "TU_PROYECTO",
-  storageBucket: "TU_PROYECTO.appspot.com",
-  messagingSenderId: "TU_SENDER_ID",
-  appId: "TU_APP_ID"
+  apiKey: "AIzaSyArmDnt_TtLdD89QMQAx-bdOf9-HGN5l_o",
+  authDomain: "guiasshoppingparis-3c7d3.firebaseapp.com",
+  projectId: "guiasshoppingparis-3c7d3",
+  storageBucket: "guiasshoppingparis-3c7d3.firebasestorage.app",
+  messagingSenderId: "115186832736",
+  appId: "1:115186832736:web:6521834c68e08cb62dba05",
+  measurementId: "G-TTMCZC68HF"
 };
 
 // App principal: sesión activa del usuario logueado.
@@ -29,6 +31,13 @@ const secondaryApp = firebase.initializeApp(firebaseConfig, "Secondary");
 const auth = firebase.auth();
 const db = firebase.firestore();
 const secondaryAuth = secondaryApp.auth();
+
+// Fuerza a Firestore a detectar automáticamente si necesita usar "long polling"
+// en vez de su conexión streaming habitual (WebChannel). Esto evita el error
+// "client is offline" / "unavailable" que aparece en redes con firewall,
+// antivirus con inspección SSL, o proxys corporativos que cortan ese tipo
+// de conexión persistente aunque el resto de internet funcione normal.
+db.settings({ experimentalAutoDetectLongPolling: true });
 
 // Se cuelgan explícitamente de "window": el script de app.js se ejecuta a
 // través del transformador de Babel en el navegador, que en algunos casos
