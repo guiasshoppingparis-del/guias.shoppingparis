@@ -885,15 +885,27 @@ function App() {
   const [perfil, setPerfil] = useState(null);
   const [cargandoAuth, setCargandoAuth] = useState(true);
 
+  const [errorConexion, setErrorConexion] = useState("");
+
   // Verifica si hace falta el setup inicial. Se consulta config/meta (de
   // lectura pública) en vez de /usuarios, porque todavía no hay sesión y
   // las reglas de seguridad no permiten leer /usuarios sin estar logueado.
   useEffect(() => {
-    db.collection("config").doc("meta").get().then((doc) => {
-      const completo = doc.exists && doc.data().setupCompleto === true;
-      setNecesitaSetup(!completo);
-      setCargandoInicial(false);
-    });
+    db.collection("config").doc("meta").get()
+      .then((doc) => {
+        const completo = doc.exists && doc.data().setupCompleto === true;
+        setNecesitaSetup(!completo);
+        setCargandoInicial(false);
+      })
+      .catch((err) => {
+        console.error(err);
+        setErrorConexion(
+          "No se pudo conectar con la base de datos. Verificá que Firestore " +
+          "esté creado en Firebase Console y que firebase-config.js tenga las " +
+          "credenciales correctas. (" + err.code + ")"
+        );
+        setCargandoInicial(false);
+      });
   }, []);
 
   useEffect(() => {
@@ -925,6 +937,19 @@ function App() {
 
   if (cargandoInicial || cargandoAuth) {
     return <div className="center-loading">Cargando…</div>;
+  }
+
+  if (errorConexion) {
+    return (
+      <div className="auth-screen">
+        <div className="auth-card">
+          <div className="auth-eyebrow">Error de conexión</div>
+          <h1>No se pudo conectar</h1>
+          <div className="form-error">{errorConexion}</div>
+          <button className="btn btn-ghost" onClick={() => window.location.reload()}>Reintentar</button>
+        </div>
+      </div>
+    );
   }
 
   if (necesitaSetup) {
