@@ -9,12 +9,13 @@
  */
 
 const firebaseConfig = {
-  apiKey: "TU_API_KEY",
-  authDomain: "TU_PROYECTO.firebaseapp.com",
-  projectId: "TU_PROYECTO",
-  storageBucket: "TU_PROYECTO.appspot.com",
-  messagingSenderId: "TU_SENDER_ID",
-  appId: "TU_APP_ID"
+    apiKey: "AIzaSyArmDnt_TtLdD89QMQAx-bdOf9-HGN5l_o",
+    authDomain: "guiasshoppingparis-3c7d3.firebaseapp.com",
+    projectId: "guiasshoppingparis-3c7d3",
+    storageBucket: "guiasshoppingparis-3c7d3.firebasestorage.app",
+    messagingSenderId: "115186832736",
+    appId: "1:115186832736:web:6521834c68e08cb62dba05",
+    measurementId: "G-TTMCZC68HF"
 };
 
 // App principal: sesión activa del usuario logueado.
