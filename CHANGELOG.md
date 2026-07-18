@@ -2,6 +2,24 @@
 
 Versionado simplificado `vMAJOR.MINOR`. MAJOR = cambios de arquitectura o que rompen datos existentes. MINOR = funcionalidad nueva incremental.
 
+## v0.5 — 2026-07-18
+
+Reportes + mayúsculas en todos los formularios.
+
+- Nueva pantalla "Reportes" (visible con el permiso `ver_reportes`): personas y vehículos ingresados por rango de fechas, con atajos "Hoy" / "Esta semana" / "Este mes".
+- Resumen de liberados / no liberados del período consultado.
+- Tabla de "Guías no liberados": guía, empresa, vehículo, pasajeros, monto acumulado vs. mínimo y cuánto faltó.
+- Todos los campos de texto de la app (nombres, empresas, chapas, tickets, roles) ahora se guardan en mayúsculas de forma consistente. Se excluyen email y contraseña.
+
+## v0.4 — 2026-07-18
+
+Cierre de día.
+
+- Botón "Cerrar día" (visible para roles con permiso `registrar_visitas`) sobre la lista de "Visitas en curso".
+- Antes de confirmar, muestra una vista previa de todas las visitas que se van a cerrar, con el resultado estimado de cada una (liberada / no liberada) según el monto acumulado.
+- Al confirmar: cierra todas en un solo lote (batch de Firestore). Las que alcanzaron el mínimo pasan a `liberado`; las que no, a `no_liberado`, quedando etiquetadas para que el guía abone por caja tradicional.
+- Se registra quién ejecutó el cierre y se marca `cerradaPorCierreDia: true` para poder diferenciarlas en reportes futuros de las liberaciones manuales.
+
 ## v0.3 — 2026-07-18
 
 Monto acumulado + liberación de estacionamiento.
@@ -42,8 +60,6 @@ Estructura base del sistema.
 
 | Versión | Alcance |
 |---|---|
-| v0.4 | Cierre manual de día + estado "no liberado" |
-| v0.5 | Reportes: personas/vehículos por período, guías no liberados |
 | v0.6 | Ranking de guías + fidelidad (fórmula combinada y configurable) |
 | v0.7 | Mapa de calor de afluencia |
 | v0.8 | Logo configurable (Firebase Storage) en header y encabezado de reportes/PDFs |

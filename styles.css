@@ -26,6 +26,15 @@
   box-sizing: border-box;
 }
 
+.field input:not([type="email"]):not([type="password"]):not([type="number"]),
+.field textarea {
+  text-transform: uppercase;
+}
+
+.field input::placeholder {
+  text-transform: none;
+}
+
 html,
 body,
 #root {

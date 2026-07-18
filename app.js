@@ -111,7 +111,7 @@ function SetupInicial() {
         <form onSubmit={crearAdmin}>
           <div className="field">
             <label>Nombre y apellido</label>
-            <input value={nombre} onChange={(e) => setNombre(e.target.value)} required />
+            <input value={nombre} onChange={(e) => setNombre(e.target.value.toUpperCase())} required />
           </div>
           <div className="field">
             <label>Email</label>
@@ -268,16 +268,16 @@ function PanelInicio({ perfil }) {
       </div>
 
       <div className="ticket">
-        <div className="ticket-stub">v0.3</div>
+        <div className="ticket-stub">v0.5</div>
         <div className="ticket-perforation"></div>
         <div className="ticket-body">
           <h2 style={{ fontSize: 16, marginBottom: 6 }}>Roadmap del sistema</h2>
           <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 10 }}>
-            Ya se puede registrar el monto de compras y liberar el estacionamiento con
-            emisión de ticket en PDF. Las próximas versiones suman cierre de día, reportes,
-            ranking de guías y mapa de calor.
+            Ya se pueden consultar reportes de personas y vehículos por período, y
+            revisar los guías no liberados. Las próximas versiones suman ranking de
+            fidelidad y mapa de calor.
           </p>
-          <span className="badge badge-gold">Próximo: v0.4 — Cierre de día</span>
+          <span className="badge badge-gold">Próximo: v0.6 — Ranking y fidelidad</span>
         </div>
       </div>
     </div>
@@ -511,7 +511,7 @@ function ModalUsuario({ usuario, roles, onClose, mostrarToast }) {
       <form onSubmit={guardar}>
         <div className="field">
           <label>Nombre y apellido</label>
-          <input value={nombre} onChange={(e) => setNombre(e.target.value)} required />
+          <input value={nombre} onChange={(e) => setNombre(e.target.value.toUpperCase())} required />
         </div>
         <div className="field">
           <label>Email</label>
@@ -589,7 +589,7 @@ function ModalRol({ rol, onClose, mostrarToast }) {
       <form onSubmit={guardar}>
         <div className="field">
           <label>Nombre del rol</label>
-          <input value={nombre} onChange={(e) => setNombre(e.target.value)} required />
+          <input value={nombre} onChange={(e) => setNombre(e.target.value.toUpperCase())} required />
         </div>
         <div className="field">
           <label>Permisos</label>
@@ -631,6 +631,7 @@ function VisitasView({ perfil, mostrarToast }) {
   const [tiposVehiculo, setTiposVehiculo] = useState([]);
   const [visitasEnCurso, setVisitasEnCurso] = useState([]);
   const [visitaSeleccionada, setVisitaSeleccionada] = useState(null);
+  const [mostrarCierreDia, setMostrarCierreDia] = useState(false);
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
@@ -698,7 +699,12 @@ function VisitasView({ perfil, mostrarToast }) {
       <div style={{ marginTop: 32 }}>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 14 }}>
           <h2 style={{ fontSize: 18 }}>Visitas en curso</h2>
-          <span className="badge badge-gold">{visitasEnCurso.length}</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span className="badge badge-gold">{visitasEnCurso.length}</span>
+            {tienePermiso(perfil, "registrar_visitas") && visitasEnCurso.length > 0 && (
+              <button className="btn btn-ghost" onClick={() => setMostrarCierreDia(true)}>Cerrar día</button>
+            )}
+          </div>
         </div>
 
         {visitasEnCurso.length === 0 ? (
@@ -770,6 +776,15 @@ function VisitasView({ perfil, mostrarToast }) {
           mostrarToast={mostrarToast}
         />
       )}
+
+      {mostrarCierreDia && (
+        <ModalCierreDia
+          visitas={visitasEnCurso}
+          perfil={perfil}
+          onClose={() => setMostrarCierreDia(false)}
+          mostrarToast={mostrarToast}
+        />
+      )}
     </div>
   );
 }
@@ -798,7 +813,7 @@ function FormularioVisita({ guias, empresas, tiposVehiculo, perfil, mostrarToast
   }
 
   function cambiarNombreGuia(valor) {
-    setNombreGuia(valor);
+    setNombreGuia(valor.toUpperCase());
     setGuiaSeleccionado(null);
     setMostrarSugerencias(true);
   }
@@ -931,7 +946,7 @@ function FormularioVisita({ guias, empresas, tiposVehiculo, perfil, mostrarToast
             </div>
             <div className="field">
               <label>Chapa</label>
-              <input value={chapa} onChange={(e) => setChapa(e.target.value)} placeholder="AB 123 CD" required />
+              <input value={chapa} onChange={(e) => setChapa(e.target.value.toUpperCase())} placeholder="AB 123 CD" required />
             </div>
           </div>
 
@@ -939,7 +954,7 @@ function FormularioVisita({ guias, empresas, tiposVehiculo, perfil, mostrarToast
             <label>Ticket de estacionamiento</label>
             <input
               value={ticket}
-              onChange={(e) => setTicket(e.target.value)}
+              onChange={(e) => setTicket(e.target.value.toUpperCase())}
               placeholder="Número impreso en el ticket"
               required
             />
@@ -1127,6 +1142,105 @@ function ModalLiberarVisita({ visita, perfil, onClose, mostrarToast }) {
 }
 
 // ---------------------------------------------------------------------------
+// Cierre de día: cierra en lote todas las visitas que quedaron abiertas
+// ---------------------------------------------------------------------------
+
+function ModalCierreDia({ visitas, perfil, onClose, mostrarToast }) {
+  const [cargando, setCargando] = useState(false);
+  const [error, setError] = useState("");
+
+  const preview = visitas.map((v) => ({
+    ...v,
+    seLiberará: (v.montoAcumulado || 0) >= (v.montoMinimoRequerido || 0)
+  }));
+  const cantidadLiberadas = preview.filter((v) => v.seLiberará).length;
+  const cantidadNoLiberadas = preview.length - cantidadLiberadas;
+
+  async function confirmarCierre() {
+    setCargando(true);
+    setError("");
+    try {
+      // Firestore permite hasta 500 escrituras por batch; para la escala de
+      // una sola sala de guías esto sobra de sobra.
+      const batch = db.batch();
+      preview.forEach((v) => {
+        const ref = db.collection("visitas").doc(v.id);
+        batch.update(ref, {
+          estado: v.seLiberará ? "liberado" : "no_liberado",
+          fechaHoraSalida: firebase.firestore.FieldValue.serverTimestamp(),
+          usuarioSalidaId: perfil.id,
+          usuarioSalidaNombre: perfil.nombre,
+          cerradaPorCierreDia: true
+        });
+      });
+      await batch.commit();
+      mostrarToast(`Día cerrado: ${cantidadLiberadas} liberadas, ${cantidadNoLiberadas} no liberadas.`);
+      onClose();
+    } catch (err) {
+      console.error(err);
+      setError("No se pudo completar el cierre de día. Probá de nuevo.");
+      setCargando(false);
+    }
+  }
+
+  return (
+    <Modal
+      titulo="Cerrar día"
+      onClose={onClose}
+      footer={
+        <React.Fragment>
+          <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-primary" style={{ width: "auto", padding: "11px 20px" }} onClick={confirmarCierre} disabled={cargando}>
+            {cargando ? "Cerrando..." : "Confirmar cierre de día"}
+          </button>
+        </React.Fragment>
+      }
+    >
+      {error && <div className="form-error">{error}</div>}
+      <p style={{ fontSize: 14, color: "var(--text-muted)", marginBottom: 14 }}>
+        Se van a cerrar <strong>{preview.length}</strong> visitas que siguen abiertas. Las que alcanzaron
+        el monto mínimo quedan <strong>liberadas</strong>; las que no, quedan marcadas como
+        <strong> no liberadas</strong> (el guía abona el estacionamiento por caja tradicional).
+      </p>
+
+      <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+        <span className="badge badge-success">{cantidadLiberadas} se liberarán</span>
+        <span className="badge badge-alert">{cantidadNoLiberadas} no liberadas</span>
+      </div>
+
+      <div style={{ maxHeight: 280, overflowY: "auto", border: "1px solid var(--line)", borderRadius: 8 }}>
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Guía</th>
+              <th>Ticket</th>
+              <th>Monto</th>
+              <th>Resultado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {preview.map((v) => (
+              <tr key={v.id}>
+                <td>{v.guiaNombre}</td>
+                <td>{v.ticketEstacionamiento}</td>
+                <td>$ {Number(v.montoAcumulado || 0).toLocaleString("es-AR")} / $ {Number(v.montoMinimoRequerido || 0).toLocaleString("es-AR")}</td>
+                <td>
+                  {v.seLiberará ? (
+                    <span className="badge badge-success">Liberado</span>
+                  ) : (
+                    <span className="badge badge-alert">No liberado</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Vista genérica de catálogo simple (Empresas / Tipos de vehículo)
 // ---------------------------------------------------------------------------
 
@@ -1269,7 +1383,7 @@ function ModalCatalogo({ titulo, coleccion, campos, item, onClose, mostrarToast 
               type={c.tipo === "moneda" ? "number" : "text"}
               min={c.tipo === "moneda" ? 0 : undefined}
               value={valores[c.id]}
-              onChange={(e) => set(c.id, e.target.value)}
+              onChange={(e) => set(c.id, c.tipo === "moneda" ? e.target.value : e.target.value.toUpperCase())}
               required
             />
           </div>
@@ -1289,12 +1403,192 @@ function ModalCatalogo({ titulo, coleccion, campos, item, onClose, mostrarToast 
 }
 
 // ---------------------------------------------------------------------------
+// Vista: Reportes
+// ---------------------------------------------------------------------------
+
+function fechaISO(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function ReportesView() {
+  const hoy = new Date();
+  const [desde, setDesde] = useState(fechaISO(hoy));
+  const [hasta, setHasta] = useState(fechaISO(hoy));
+  const [visitas, setVisitas] = useState([]);
+  const [cargando, setCargando] = useState(false);
+  const [error, setError] = useState("");
+  const [consultado, setConsultado] = useState(false);
+
+  async function consultar(e) {
+    if (e) e.preventDefault();
+    setCargando(true);
+    setError("");
+    try {
+      const inicio = firebase.firestore.Timestamp.fromDate(new Date(desde + "T00:00:00"));
+      const fin = firebase.firestore.Timestamp.fromDate(new Date(hasta + "T23:59:59"));
+      const snap = await db
+        .collection("visitas")
+        .where("fechaHoraIngreso", ">=", inicio)
+        .where("fechaHoraIngreso", "<=", fin)
+        .orderBy("fechaHoraIngreso", "desc")
+        .get();
+      setVisitas(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setConsultado(true);
+    } catch (err) {
+      console.error(err);
+      setError("No se pudo generar el reporte. Probá de nuevo.");
+    } finally {
+      setCargando(false);
+    }
+  }
+
+  useEffect(() => {
+    consultar();
+  }, []);
+
+  function aplicarPreset(preset) {
+    const d = new Date();
+    if (preset === "hoy") {
+      setDesde(fechaISO(d));
+      setHasta(fechaISO(d));
+    } else if (preset === "semana") {
+      const inicioSemana = new Date(d);
+      inicioSemana.setDate(d.getDate() - d.getDay());
+      setDesde(fechaISO(inicioSemana));
+      setHasta(fechaISO(d));
+    } else if (preset === "mes") {
+      const inicioMes = new Date(d.getFullYear(), d.getMonth(), 1);
+      setDesde(fechaISO(inicioMes));
+      setHasta(fechaISO(d));
+    }
+  }
+
+  const totalPersonas = visitas.reduce((acc, v) => acc + (Number(v.cantPasajeros) || 0), 0);
+  const totalVehiculos = visitas.length;
+  const liberadas = visitas.filter((v) => v.estado === "liberado").length;
+  const noLiberadas = visitas.filter((v) => v.estado === "no_liberado").length;
+  const enCurso = visitas.filter((v) => v.estado === "en_curso").length;
+  const guiasNoLiberados = visitas.filter((v) => v.estado === "no_liberado");
+
+  return (
+    <div>
+      <div className="page-header">
+        <div>
+          <div className="page-eyebrow">Reportes</div>
+          <h1>Actividad por período</h1>
+          <p className="page-desc">Consultá personas y vehículos ingresados, y las visitas que no se liberaron.</p>
+        </div>
+      </div>
+
+      <div className="panel" style={{ marginBottom: 24 }}>
+        <div className="panel-body">
+          <form onSubmit={consultar} style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+            <div className="field" style={{ marginBottom: 0 }}>
+              <label>Desde</label>
+              <input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} required />
+            </div>
+            <div className="field" style={{ marginBottom: 0 }}>
+              <label>Hasta</label>
+              <input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} required />
+            </div>
+            <button className="btn btn-gold" disabled={cargando} style={{ width: "auto", padding: "11px 20px" }}>
+              {cargando ? "Consultando..." : "Consultar"}
+            </button>
+            <div style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
+              <button type="button" className="btn btn-ghost" onClick={() => aplicarPreset("hoy")}>Hoy</button>
+              <button type="button" className="btn btn-ghost" onClick={() => aplicarPreset("semana")}>Esta semana</button>
+              <button type="button" className="btn btn-ghost" onClick={() => aplicarPreset("mes")}>Este mes</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      {error && <div className="form-error">{error}</div>}
+
+      {consultado && (
+        <React.Fragment>
+          <div className="stat-grid">
+            <div className="stat-card">
+              <div className="stat-label">Personas ingresadas</div>
+              <div className="stat-value">{totalPersonas}</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Vehículos ingresados</div>
+              <div className="stat-value">{totalVehiculos}</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Liberados</div>
+              <div className="stat-value" style={{ color: "var(--success)" }}>{liberadas}</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">No liberados</div>
+              <div className="stat-value" style={{ color: "var(--alert)" }}>{noLiberadas}</div>
+            </div>
+          </div>
+
+          {enCurso > 0 && (
+            <p style={{ fontSize: 13, color: "var(--text-muted)", marginTop: -14, marginBottom: 20 }}>
+              Además, {enCurso} {enCurso === 1 ? "visita sigue" : "visitas siguen"} en curso dentro de este período.
+            </p>
+          )}
+
+          <div className="panel">
+            <div className="panel-header">
+              <h2>Guías no liberados</h2>
+              <span className="badge badge-alert">{guiasNoLiberados.length}</span>
+            </div>
+            <div className="panel-body" style={{ padding: 0 }}>
+              {guiasNoLiberados.length === 0 ? (
+                <div className="empty-state">
+                  <div className="display">No hubo visitas sin liberar en este período</div>
+                </div>
+              ) : (
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Fecha</th>
+                      <th>Guía</th>
+                      <th>Empresa</th>
+                      <th>Vehículo</th>
+                      <th>Pasajeros</th>
+                      <th>Monto / Mínimo</th>
+                      <th>Faltó</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {guiasNoLiberados.map((v) => (
+                      <tr key={v.id}>
+                        <td>{formatearFechaHora(v.fechaHoraIngreso)}</td>
+                        <td>{v.guiaNombre}</td>
+                        <td>{v.empresaNombre}</td>
+                        <td>{v.vehiculoTipoNombre} · {v.chapa}</td>
+                        <td>{v.cantPasajeros}</td>
+                        <td>$ {Number(v.montoAcumulado || 0).toLocaleString("es-AR")} / $ {Number(v.montoMinimoRequerido || 0).toLocaleString("es-AR")}</td>
+                        <td>$ {Math.max(0, (v.montoMinimoRequerido || 0) - (v.montoAcumulado || 0)).toLocaleString("es-AR")}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </React.Fragment>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Shell principal (sidebar + contenido)
 // ---------------------------------------------------------------------------
 
 const NAV_ITEMS = [
   { id: "panel", label: "Panel", icon: "◆", permiso: null },
   { id: "visitas", label: "Visitas", icon: "◈", permiso: "registrar_visitas" },
+  { id: "reportes", label: "Reportes", icon: "◈", permiso: "ver_reportes" },
   { id: "usuarios", label: "Usuarios y roles", icon: "◈", permiso: "gestionar_usuarios" },
   { id: "empresas", label: "Empresas", icon: "◇", permiso: "gestionar_catalogos" },
   { id: "vehiculos", label: "Tipos de vehículo", icon: "◇", permiso: "gestionar_catalogos" }
@@ -1323,6 +1617,9 @@ function Shell({ perfil }) {
   function renderVista() {
     if (vista === "visitas" && tienePermiso(perfil, "registrar_visitas")) {
       return <VisitasView perfil={perfil} mostrarToast={mostrarToast} />;
+    }
+    if (vista === "reportes" && tienePermiso(perfil, "ver_reportes")) {
+      return <ReportesView />;
     }
     if (vista === "usuarios" && tienePermiso(perfil, "gestionar_usuarios")) {
       return <UsuariosView mostrarToast={mostrarToast} />;
