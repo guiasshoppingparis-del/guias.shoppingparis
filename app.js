@@ -613,80 +613,6 @@ function ModalRol({ rol, onClose, mostrarToast }) {
 }
 
 // ---------------------------------------------------------------------------
-// Escaneo de ticket de estacionamiento (QR / código de barras)
-// ---------------------------------------------------------------------------
-
-function EscanerTicket({ onDetectado, onClose }) {
-  const [error, setError] = useState("");
-  const [buscandoCamara, setBuscandoCamara] = useState(true);
-
-  useEffect(() => {
-    let activo = true;
-    const scanner = new Html5Qrcode("lector-qr");
-
-    Html5Qrcode.getCameras()
-      .then((camaras) => {
-        if (!activo) return;
-        if (!camaras || camaras.length === 0) {
-          setError("No se encontró ninguna cámara disponible en este dispositivo.");
-          setBuscandoCamara(false);
-          return;
-        }
-        // En celulares, la última cámara de la lista suele ser la trasera.
-        const camaraId = camaras[camaras.length - 1].id;
-        setBuscandoCamara(false);
-        scanner
-          .start(
-            camaraId,
-            { fps: 10, qrbox: { width: 240, height: 160 } },
-            (textoDetectado) => {
-              if (!activo) return;
-              activo = false;
-              scanner
-                .stop()
-                .then(() => scanner.clear())
-                .catch(() => {});
-              onDetectado(textoDetectado.trim());
-            },
-            () => {
-              /* frames sin detección: se ignoran, es normal mientras se enfoca */
-            }
-          )
-          .catch((err) => {
-            setError("No se pudo acceder a la cámara. Revisá los permisos del navegador.");
-            console.error(err);
-          });
-      })
-      .catch((err) => {
-        setError("No se pudo acceder a la cámara. Revisá los permisos del navegador.");
-        setBuscandoCamara(false);
-        console.error(err);
-      });
-
-    return () => {
-      activo = false;
-      scanner
-        .stop()
-        .then(() => scanner.clear())
-        .catch(() => {});
-    };
-  }, []);
-
-  return (
-    <Modal titulo="Escanear ticket de estacionamiento" onClose={onClose}>
-      {error && <div className="form-error">{error}</div>}
-      {buscandoCamara && !error && <p style={{ fontSize: 14, color: "var(--text-muted)" }}>Buscando cámara…</p>}
-      <div id="lector-qr"></div>
-      {!error && (
-        <p style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 10 }}>
-          Apuntá la cámara al código de barras o QR del ticket de estacionamiento.
-        </p>
-      )}
-    </Modal>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Vista: Visitas (ingreso de guías a la sala)
 // ---------------------------------------------------------------------------
 
@@ -804,7 +730,6 @@ function FormularioVisita({ guias, empresas, tiposVehiculo, perfil, mostrarToast
   const [vehiculoTipoId, setVehiculoTipoId] = useState("");
   const [chapa, setChapa] = useState("");
   const [ticket, setTicket] = useState("");
-  const [mostrarEscaner, setMostrarEscaner] = useState(false);
   const [error, setError] = useState("");
   const [cargando, setCargando] = useState(false);
 
@@ -959,17 +884,12 @@ function FormularioVisita({ guias, empresas, tiposVehiculo, perfil, mostrarToast
 
           <div className="field">
             <label>Ticket de estacionamiento</label>
-            <div className="scan-row">
-              <input
-                value={ticket}
-                onChange={(e) => setTicket(e.target.value)}
-                placeholder="Escaneá o escribí el número"
-                required
-              />
-              <button type="button" className="btn btn-ghost" onClick={() => setMostrarEscaner(true)}>
-                📷 Escanear
-              </button>
-            </div>
+            <input
+              value={ticket}
+              onChange={(e) => setTicket(e.target.value)}
+              placeholder="Número impreso en el ticket"
+              required
+            />
           </div>
 
           <button className="btn btn-primary" disabled={cargando} style={{ width: "auto", padding: "11px 24px" }}>
@@ -977,16 +897,6 @@ function FormularioVisita({ guias, empresas, tiposVehiculo, perfil, mostrarToast
           </button>
         </form>
       </div>
-
-      {mostrarEscaner && (
-        <EscanerTicket
-          onDetectado={(texto) => {
-            setTicket(texto);
-            setMostrarEscaner(false);
-          }}
-          onClose={() => setMostrarEscaner(false)}
-        />
-      )}
     </div>
   );
 }

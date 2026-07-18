@@ -672,20 +672,6 @@ table.data-table {
   }
 }
 
-.scan-row {
-  display: flex;
-  gap: 8px;
-}
-
-.scan-row input {
-  flex: 1;
-}
-
-#lector-qr {
-  border-radius: 10px;
-  overflow: hidden;
-}
-
 /* ---------- Modal ---------- */
 
 
