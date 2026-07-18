@@ -268,16 +268,16 @@ function PanelInicio({ perfil }) {
       </div>
 
       <div className="ticket">
-        <div className="ticket-stub">v0.2</div>
+        <div className="ticket-stub">v0.3</div>
         <div className="ticket-perforation"></div>
         <div className="ticket-body">
           <h2 style={{ fontSize: 16, marginBottom: 6 }}>Roadmap del sistema</h2>
           <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 10 }}>
-            Ya se puede registrar el ingreso de guías con escaneo del ticket de estacionamiento.
-            Las próximas versiones suman liberación de estacionamiento, cierre de día, reportes,
+            Ya se puede registrar el monto de compras y liberar el estacionamiento con
+            emisión de ticket en PDF. Las próximas versiones suman cierre de día, reportes,
             ranking de guías y mapa de calor.
           </p>
-          <span className="badge badge-gold">Próximo: v0.3 — Liberación de estacionamiento</span>
+          <span className="badge badge-gold">Próximo: v0.4 — Cierre de día</span>
         </div>
       </div>
     </div>
@@ -630,6 +630,7 @@ function VisitasView({ perfil, mostrarToast }) {
   const [empresas, setEmpresas] = useState([]);
   const [tiposVehiculo, setTiposVehiculo] = useState([]);
   const [visitasEnCurso, setVisitasEnCurso] = useState([]);
+  const [visitaSeleccionada, setVisitaSeleccionada] = useState(null);
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
@@ -660,11 +661,21 @@ function VisitasView({ perfil, mostrarToast }) {
     };
   }, []);
 
+  // Mantiene sincronizada la visita abierta en el modal con los cambios en vivo.
+  useEffect(() => {
+    if (!visitaSeleccionada) return;
+    const actualizada = visitasEnCurso.find((v) => v.id === visitaSeleccionada.id);
+    if (actualizada) setVisitaSeleccionada(actualizada);
+    else setVisitaSeleccionada(null); // ya se liberó (desde otra pestaña, por ejemplo)
+  }, [visitasEnCurso]);
+
   // Refresca el "tiempo transcurrido" de cada tarjeta cada 30 segundos.
   useEffect(() => {
     const i = setInterval(() => setTick((t) => t + 1), 30000);
     return () => clearInterval(i);
   }, []);
+
+  const puedeLiberar = tienePermiso(perfil, "liberar_estacionamiento");
 
   return (
     <div>
@@ -699,24 +710,66 @@ function VisitasView({ perfil, mostrarToast }) {
           </div>
         ) : (
           <div className="ticket-grid">
-            {visitasEnCurso.map((v) => (
-              <div className="ticket" key={v.id}>
-                <div className="ticket-stub">{tiempoTranscurrido(v.fechaHoraIngreso)}</div>
-                <div className="ticket-perforation"></div>
-                <div className="ticket-body">
-                  <h3 style={{ fontSize: 16 }}>{v.guiaNombre}</h3>
-                  <div className="ticket-meta">
-                    <span><strong>Empresa:</strong> {v.empresaNombre}</span>
-                    <span><strong>Vehículo:</strong> {v.vehiculoTipoNombre} · {v.chapa}</span>
-                    <span><strong>Pasajeros:</strong> {v.cantPasajeros}</span>
-                    <span><strong>Ticket:</strong> {v.ticketEstacionamiento}</span>
+            {visitasEnCurso.map((v) => {
+              const porcentaje = v.montoMinimoRequerido > 0
+                ? Math.min(100, Math.round((v.montoAcumulado / v.montoMinimoRequerido) * 100))
+                : 0;
+              const alcanzado = v.montoAcumulado >= v.montoMinimoRequerido;
+              return (
+                <div className="ticket" key={v.id}>
+                  <div className="ticket-stub">{tiempoTranscurrido(v.fechaHoraIngreso)}</div>
+                  <div className="ticket-perforation"></div>
+                  <div className="ticket-body">
+                    <h3 style={{ fontSize: 16 }}>{v.guiaNombre}</h3>
+                    <div className="ticket-meta">
+                      <span><strong>Empresa:</strong> {v.empresaNombre}</span>
+                      <span><strong>Vehículo:</strong> {v.vehiculoTipoNombre} · {v.chapa}</span>
+                      <span><strong>Pasajeros:</strong> {v.cantPasajeros}</span>
+                      <span><strong>Ticket:</strong> {v.ticketEstacionamiento}</span>
+                    </div>
+
+                    <div style={{ marginTop: 12 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--text-muted)", marginBottom: 4 }}>
+                        <span>$ {Number(v.montoAcumulado || 0).toLocaleString("es-AR")} de $ {Number(v.montoMinimoRequerido || 0).toLocaleString("es-AR")}</span>
+                        <span>{porcentaje}%</span>
+                      </div>
+                      <div style={{ height: 6, borderRadius: 4, background: "var(--paper)", overflow: "hidden" }}>
+                        <div
+                          style={{
+                            height: "100%",
+                            width: `${porcentaje}%`,
+                            background: alcanzado ? "var(--success)" : "var(--gold)",
+                            transition: "width 0.2s ease"
+                          }}
+                        ></div>
+                      </div>
+                    </div>
+
+                    {puedeLiberar && (
+                      <button
+                        className="btn btn-gold"
+                        style={{ marginTop: 14, width: "100%" }}
+                        onClick={() => setVisitaSeleccionada(v)}
+                      >
+                        {alcanzado ? "Liberar estacionamiento" : "Registrar compra"}
+                      </button>
+                    )}
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
+
+      {visitaSeleccionada && (
+        <ModalLiberarVisita
+          visita={visitaSeleccionada}
+          perfil={perfil}
+          onClose={() => setVisitaSeleccionada(null)}
+          mostrarToast={mostrarToast}
+        />
+      )}
     </div>
   );
 }
@@ -898,6 +951,178 @@ function FormularioVisita({ guias, empresas, tiposVehiculo, perfil, mostrarToast
         </form>
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Liberación de estacionamiento + PDF de ticket de salida
+// ---------------------------------------------------------------------------
+
+function formatearFechaHora(fecha) {
+  if (!fecha) return "—";
+  const d = fecha.toDate ? fecha.toDate() : new Date(fecha);
+  return d.toLocaleString("es-PY", { dateStyle: "short", timeStyle: "short" });
+}
+
+function generarPdfLiberacion(visita, usuarioNombre) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: "mm", format: [100, 150] });
+
+  const margen = 10;
+  let y = 16;
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(14);
+  doc.text("SHOPPING PARIS", margen, y);
+  y += 6;
+  doc.setFontSize(10);
+  doc.text("Comprobante de liberación de estacionamiento", margen, y);
+  y += 4;
+  doc.setLineWidth(0.3);
+  doc.line(margen, y, 100 - margen, y);
+  y += 8;
+
+  function fila(etiqueta, valor) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.text(etiqueta, margen, y);
+    doc.setFont("helvetica", "normal");
+    doc.text(String(valor), margen, y + 5);
+    y += 12;
+  }
+
+  fila("Guía", visita.guiaNombre);
+  fila("Empresa", visita.empresaNombre);
+  fila("Vehículo / Chapa", `${visita.vehiculoTipoNombre} — ${visita.chapa}`);
+  fila("N° Ticket de estacionamiento", visita.ticketEstacionamiento);
+  fila("Ingreso", formatearFechaHora(visita.fechaHoraIngreso));
+  fila("Salida", formatearFechaHora(new Date()));
+  fila("Tiempo de permanencia", tiempoTranscurrido(visita.fechaHoraIngreso));
+  fila("Monto acumulado en compras", `$ ${Number(visita.montoAcumulado || 0).toLocaleString("es-AR")}`);
+
+  doc.setLineWidth(0.3);
+  doc.line(margen, y, 100 - margen, y);
+  y += 8;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+  doc.text(`Liberado por: ${usuarioNombre}`, margen, y);
+  y += 5;
+  doc.text(`Emitido: ${new Date().toLocaleString("es-PY")}`, margen, y);
+
+  doc.save(`liberacion-ticket-${visita.ticketEstacionamiento}.pdf`);
+}
+
+function ModalLiberarVisita({ visita, perfil, onClose, mostrarToast }) {
+  const [montoNuevo, setMontoNuevo] = useState("");
+  const [cargando, setCargando] = useState(false);
+  const [error, setError] = useState("");
+
+  const porcentaje = visita.montoMinimoRequerido > 0
+    ? Math.min(100, Math.round((visita.montoAcumulado / visita.montoMinimoRequerido) * 100))
+    : 0;
+  const alcanzado = visita.montoAcumulado >= visita.montoMinimoRequerido;
+  const falta = Math.max(0, visita.montoMinimoRequerido - visita.montoAcumulado);
+
+  async function agregarMonto(e) {
+    e.preventDefault();
+    setError("");
+    const valor = Number(montoNuevo);
+    if (!valor || valor <= 0) {
+      setError("Ingresá un monto válido.");
+      return;
+    }
+    setCargando(true);
+    try {
+      await db.collection("visitas").doc(visita.id).update({
+        montoAcumulado: firebase.firestore.FieldValue.increment(valor)
+      });
+      mostrarToast("Monto registrado.");
+      setMontoNuevo("");
+    } catch (err) {
+      console.error(err);
+      setError("No se pudo registrar el monto. Probá de nuevo.");
+    } finally {
+      setCargando(false);
+    }
+  }
+
+  async function liberar() {
+    setCargando(true);
+    setError("");
+    try {
+      await db.collection("visitas").doc(visita.id).update({
+        estado: "liberado",
+        fechaHoraSalida: firebase.firestore.FieldValue.serverTimestamp(),
+        usuarioSalidaId: perfil.id,
+        usuarioSalidaNombre: perfil.nombre
+      });
+      generarPdfLiberacion(visita, perfil.nombre);
+      mostrarToast(`Estacionamiento liberado: ${visita.guiaNombre}`);
+      onClose();
+    } catch (err) {
+      console.error(err);
+      setError("No se pudo liberar el estacionamiento. Probá de nuevo.");
+      setCargando(false);
+    }
+  }
+
+  return (
+    <Modal titulo={`${visita.guiaNombre} — ${visita.ticketEstacionamiento}`} onClose={onClose}>
+      {error && <div className="form-error">{error}</div>}
+
+      <div className="ticket-meta" style={{ marginBottom: 14 }}>
+        <span><strong>Empresa:</strong> {visita.empresaNombre}</span>
+        <span><strong>Vehículo:</strong> {visita.vehiculoTipoNombre} · {visita.chapa}</span>
+        <span><strong>Pasajeros:</strong> {visita.cantPasajeros}</span>
+        <span><strong>En sala:</strong> {tiempoTranscurrido(visita.fechaHoraIngreso)}</span>
+      </div>
+
+      <div style={{ marginBottom: 18 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 6 }}>
+          <span>
+            $ {Number(visita.montoAcumulado || 0).toLocaleString("es-AR")} de $ {Number(visita.montoMinimoRequerido || 0).toLocaleString("es-AR")}
+          </span>
+          <span style={{ fontWeight: 600 }}>{porcentaje}%</span>
+        </div>
+        <div style={{ height: 8, borderRadius: 4, background: "var(--paper)", overflow: "hidden" }}>
+          <div
+            style={{
+              height: "100%",
+              width: `${porcentaje}%`,
+              background: alcanzado ? "var(--success)" : "var(--gold)",
+              transition: "width 0.2s ease"
+            }}
+          ></div>
+        </div>
+        {!alcanzado && (
+          <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 6 }}>
+            Faltan $ {falta.toLocaleString("es-AR")} para liberar el estacionamiento.
+          </p>
+        )}
+        {alcanzado && (
+          <p style={{ fontSize: 12, color: "var(--success)", marginTop: 6, fontWeight: 600 }}>
+            ✓ Alcanzó el monto mínimo — ya se puede liberar.
+          </p>
+        )}
+      </div>
+
+      <form onSubmit={agregarMonto} style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+        <input
+          type="number"
+          min="0"
+          step="0.01"
+          placeholder="Monto del comprobante"
+          value={montoNuevo}
+          onChange={(e) => setMontoNuevo(e.target.value)}
+          style={{ flex: 1, padding: "10px 12px", border: "1px solid var(--line)", borderRadius: 8 }}
+        />
+        <button className="btn btn-ghost" disabled={cargando}>Agregar</button>
+      </form>
+
+      <button className="btn btn-primary" disabled={!alcanzado || cargando} onClick={liberar}>
+        {cargando ? "Procesando..." : "Liberar estacionamiento y emitir ticket"}
+      </button>
+    </Modal>
   );
 }
 

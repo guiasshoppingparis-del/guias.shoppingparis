@@ -2,12 +2,21 @@
 
 Versionado simplificado `vMAJOR.MINOR`. MAJOR = cambios de arquitectura o que rompen datos existentes. MINOR = funcionalidad nueva incremental.
 
+## v0.3 — 2026-07-18
+
+Monto acumulado + liberación de estacionamiento.
+
+- Cada visita en curso muestra una barra de progreso de compras (monto acumulado vs. mínimo requerido según el tipo de vehículo).
+- Se pueden ir sumando montos de comprobantes a medida que el guía los trae (suma incremental, atómica).
+- Botón "Liberar estacionamiento" habilitado solo al alcanzar el mínimo, visible únicamente para roles con el permiso `liberar_estacionamiento`.
+- Al liberar: se actualiza el estado de la visita a `liberado`, se registra quién y cuándo, y se genera automáticamente un PDF con el comprobante (guía, empresa, vehículo, N° de ticket, horario de ingreso/salida, tiempo de permanencia y monto acumulado).
+- v0.2: se sacó el escaneo de cámara del formulario de ingreso (carga manual del N° de ticket, más simple para el flujo real de trabajo).
+
 ## v0.2 — 2026-07-17
 
 Ingreso de visitas.
 
 - Formulario de registro de ingreso: guía (con autocompletado de guías ya cargados o alta de uno nuevo), empresa, cantidad de pasajeros, tipo de vehículo, chapa y ticket de estacionamiento.
-- Escaneo del ticket de estacionamiento con la cámara (QR o código de barras), con carga manual como alternativa.
 - Nueva colección `guias`, reutilizable entre visitas.
 - Vista "Visitas en curso" con tarjetas estilo ticket, tiempo transcurrido en sala en tiempo real.
 - Conteo de visitas en curso en el panel inicial.
@@ -33,7 +42,6 @@ Estructura base del sistema.
 
 | Versión | Alcance |
 |---|---|
-| v0.3 | Registro de monto acumulado + liberación de estacionamiento + PDF de ticket de salida |
 | v0.4 | Cierre manual de día + estado "no liberado" |
 | v0.5 | Reportes: personas/vehículos por período, guías no liberados |
 | v0.6 | Ranking de guías + fidelidad (fórmula combinada y configurable) |
