@@ -1241,6 +1241,135 @@ function ModalCierreDia({ visitas, perfil, onClose, mostrarToast }) {
 }
 
 // ---------------------------------------------------------------------------
+// Vista: Guías (corrección de nombre, con sincronización a visitas en curso)
+// ---------------------------------------------------------------------------
+
+function GuiasView({ mostrarToast }) {
+  const [guias, setGuias] = useState([]);
+  const [modal, setModal] = useState(null);
+
+  useEffect(() => {
+    const unsub = db.collection("guias").orderBy("nombre").onSnapshot((snap) =>
+      setGuias(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
+    );
+    return () => unsub();
+  }, []);
+
+  return (
+    <div>
+      <div className="page-header">
+        <div>
+          <div className="page-eyebrow">Sala de guías</div>
+          <h1>Guías</h1>
+          <p className="page-desc">Corregí el nombre de un guía si se cargó mal desde el formulario de Visitas.</p>
+        </div>
+      </div>
+
+      <div className="panel">
+        <div className="panel-body" style={{ padding: 0 }}>
+          {guias.length === 0 ? (
+            <div className="empty-state">
+              <div className="display">Todavía no hay guías cargados</div>
+              <p>Se crean automáticamente al registrar una visita nueva.</p>
+            </div>
+          ) : (
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Nombre y apellido</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {guias.map((g) => (
+                  <tr key={g.id}>
+                    <td>{g.nombre}</td>
+                    <td style={{ textAlign: "right" }}>
+                      <button className="icon-btn" onClick={() => setModal(g)}>Editar</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+
+      {modal && (
+        <ModalGuia guia={modal} onClose={() => setModal(null)} mostrarToast={mostrarToast} />
+      )}
+    </div>
+  );
+}
+
+function ModalGuia({ guia, onClose, mostrarToast }) {
+  const [nombre, setNombre] = useState(guia.nombre || "");
+  const [cargando, setCargando] = useState(false);
+  const [error, setError] = useState("");
+
+  async function guardar(e) {
+    e.preventDefault();
+    if (!nombre.trim()) {
+      setError("El nombre no puede quedar vacío.");
+      return;
+    }
+    setError("");
+    setCargando(true);
+    try {
+      const nombreNuevo = nombre.trim();
+      await db.collection("guias").doc(guia.id).update({ nombre: nombreNuevo });
+
+      // Propaga la corrección a las visitas en curso de este guía, para que
+      // las tarjetas que ya están abiertas muestren el nombre corregido.
+      const abiertas = await db
+        .collection("visitas")
+        .where("guiaId", "==", guia.id)
+        .where("estado", "==", "en_curso")
+        .get();
+      if (!abiertas.empty) {
+        const batch = db.batch();
+        abiertas.docs.forEach((d) => batch.update(d.ref, { guiaNombre: nombreNuevo }));
+        await batch.commit();
+      }
+
+      mostrarToast("Guía actualizado.");
+      onClose();
+    } catch (err) {
+      console.error(err);
+      setError("No se pudo guardar el cambio. Probá de nuevo.");
+    } finally {
+      setCargando(false);
+    }
+  }
+
+  return (
+    <Modal
+      titulo="Editar guía"
+      onClose={onClose}
+      footer={
+        <React.Fragment>
+          <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-gold" onClick={guardar} disabled={cargando}>
+            {cargando ? "Guardando..." : "Guardar"}
+          </button>
+        </React.Fragment>
+      }
+    >
+      {error && <div className="form-error">{error}</div>}
+      <form onSubmit={guardar}>
+        <div className="field">
+          <label>Nombre y apellido</label>
+          <input value={nombre} onChange={(e) => setNombre(e.target.value.toUpperCase())} required />
+        </div>
+      </form>
+      <p style={{ fontSize: 12, color: "var(--text-muted)" }}>
+        Si este guía tiene una visita en curso ahora mismo, también se actualiza en esa tarjeta.
+      </p>
+    </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Vista genérica de catálogo simple (Empresas / Tipos de vehículo)
 // ---------------------------------------------------------------------------
 
@@ -1588,6 +1717,7 @@ function ReportesView() {
 const NAV_ITEMS = [
   { id: "panel", label: "Panel", icon: "◆", permiso: null },
   { id: "visitas", label: "Visitas", icon: "◈", permiso: "registrar_visitas" },
+  { id: "guias", label: "Guías", icon: "◈", permiso: "registrar_visitas" },
   { id: "reportes", label: "Reportes", icon: "◈", permiso: "ver_reportes" },
   { id: "usuarios", label: "Usuarios y roles", icon: "◈", permiso: "gestionar_usuarios" },
   { id: "empresas", label: "Empresas", icon: "◇", permiso: "gestionar_catalogos" },
@@ -1620,6 +1750,9 @@ function Shell({ perfil }) {
     }
     if (vista === "reportes" && tienePermiso(perfil, "ver_reportes")) {
       return <ReportesView />;
+    }
+    if (vista === "guias" && tienePermiso(perfil, "registrar_visitas")) {
+      return <GuiasView mostrarToast={mostrarToast} />;
     }
     if (vista === "usuarios" && tienePermiso(perfil, "gestionar_usuarios")) {
       return <UsuariosView mostrarToast={mostrarToast} />;
