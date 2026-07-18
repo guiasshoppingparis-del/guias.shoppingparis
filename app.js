@@ -214,7 +214,7 @@ function Modal({ titulo, onClose, children, footer }) {
 // ---------------------------------------------------------------------------
 
 function PanelInicio({ perfil }) {
-  const [conteos, setConteos] = useState({ usuarios: null, empresas: null, vehiculos: null });
+  const [conteos, setConteos] = useState({ usuarios: null, empresas: null, vehiculos: null, visitas: null });
 
   useEffect(() => {
     const unsub1 = db.collection("usuarios").onSnapshot((s) =>
@@ -226,10 +226,15 @@ function PanelInicio({ perfil }) {
     const unsub3 = db.collection("tiposVehiculo").onSnapshot((s) =>
       setConteos((c) => ({ ...c, vehiculos: s.size }))
     );
+    const unsub4 = db
+      .collection("visitas")
+      .where("estado", "==", "en_curso")
+      .onSnapshot((s) => setConteos((c) => ({ ...c, visitas: s.size })));
     return () => {
       unsub1();
       unsub2();
       unsub3();
+      unsub4();
     };
   }, []);
 
@@ -239,11 +244,15 @@ function PanelInicio({ perfil }) {
         <div>
           <div className="page-eyebrow">Panel</div>
           <h1>Hola, {perfil.nombre.split(" ")[0]}</h1>
-          <p className="page-desc">Estado general del sistema — módulo de visitas disponible en v0.2.</p>
+          <p className="page-desc">Estado general del sistema.</p>
         </div>
       </div>
 
       <div className="stat-grid">
+        <div className="stat-card">
+          <div className="stat-label">Visitas en curso</div>
+          <div className="stat-value">{conteos.visitas ?? "—"}</div>
+        </div>
         <div className="stat-card">
           <div className="stat-label">Usuarios activos</div>
           <div className="stat-value">{conteos.usuarios ?? "—"}</div>
@@ -259,16 +268,16 @@ function PanelInicio({ perfil }) {
       </div>
 
       <div className="ticket">
-        <div className="ticket-stub">v0.1</div>
+        <div className="ticket-stub">v0.2</div>
         <div className="ticket-perforation"></div>
         <div className="ticket-body">
           <h2 style={{ fontSize: 16, marginBottom: 6 }}>Roadmap del sistema</h2>
           <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 10 }}>
-            Esta es la versión base: autenticación, roles y catálogos. Las próximas versiones
-            suman registro de visitas con escaneo de ticket, liberación de estacionamiento,
-            cierre de día, reportes, ranking de guías y mapa de calor.
+            Ya se puede registrar el ingreso de guías con escaneo del ticket de estacionamiento.
+            Las próximas versiones suman liberación de estacionamiento, cierre de día, reportes,
+            ranking de guías y mapa de calor.
           </p>
-          <span className="badge badge-gold">Próximo: v0.2 — Ingreso de visitas</span>
+          <span className="badge badge-gold">Próximo: v0.3 — Liberación de estacionamiento</span>
         </div>
       </div>
     </div>
@@ -604,6 +613,385 @@ function ModalRol({ rol, onClose, mostrarToast }) {
 }
 
 // ---------------------------------------------------------------------------
+// Escaneo de ticket de estacionamiento (QR / código de barras)
+// ---------------------------------------------------------------------------
+
+function EscanerTicket({ onDetectado, onClose }) {
+  const [error, setError] = useState("");
+  const [buscandoCamara, setBuscandoCamara] = useState(true);
+
+  useEffect(() => {
+    let activo = true;
+    const scanner = new Html5Qrcode("lector-qr");
+
+    Html5Qrcode.getCameras()
+      .then((camaras) => {
+        if (!activo) return;
+        if (!camaras || camaras.length === 0) {
+          setError("No se encontró ninguna cámara disponible en este dispositivo.");
+          setBuscandoCamara(false);
+          return;
+        }
+        // En celulares, la última cámara de la lista suele ser la trasera.
+        const camaraId = camaras[camaras.length - 1].id;
+        setBuscandoCamara(false);
+        scanner
+          .start(
+            camaraId,
+            { fps: 10, qrbox: { width: 240, height: 160 } },
+            (textoDetectado) => {
+              if (!activo) return;
+              activo = false;
+              scanner
+                .stop()
+                .then(() => scanner.clear())
+                .catch(() => {});
+              onDetectado(textoDetectado.trim());
+            },
+            () => {
+              /* frames sin detección: se ignoran, es normal mientras se enfoca */
+            }
+          )
+          .catch((err) => {
+            setError("No se pudo acceder a la cámara. Revisá los permisos del navegador.");
+            console.error(err);
+          });
+      })
+      .catch((err) => {
+        setError("No se pudo acceder a la cámara. Revisá los permisos del navegador.");
+        setBuscandoCamara(false);
+        console.error(err);
+      });
+
+    return () => {
+      activo = false;
+      scanner
+        .stop()
+        .then(() => scanner.clear())
+        .catch(() => {});
+    };
+  }, []);
+
+  return (
+    <Modal titulo="Escanear ticket de estacionamiento" onClose={onClose}>
+      {error && <div className="form-error">{error}</div>}
+      {buscandoCamara && !error && <p style={{ fontSize: 14, color: "var(--text-muted)" }}>Buscando cámara…</p>}
+      <div id="lector-qr"></div>
+      {!error && (
+        <p style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 10 }}>
+          Apuntá la cámara al código de barras o QR del ticket de estacionamiento.
+        </p>
+      )}
+    </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Vista: Visitas (ingreso de guías a la sala)
+// ---------------------------------------------------------------------------
+
+function tiempoTranscurrido(fecha) {
+  if (!fecha) return "—";
+  const inicio = fecha.toDate ? fecha.toDate() : new Date(fecha);
+  const minutos = Math.max(0, Math.floor((Date.now() - inicio.getTime()) / 60000));
+  const h = Math.floor(minutos / 60);
+  const m = minutos % 60;
+  return h > 0 ? `${h} h ${m} min` : `${m} min`;
+}
+
+function VisitasView({ perfil, mostrarToast }) {
+  const [guias, setGuias] = useState([]);
+  const [empresas, setEmpresas] = useState([]);
+  const [tiposVehiculo, setTiposVehiculo] = useState([]);
+  const [visitasEnCurso, setVisitasEnCurso] = useState([]);
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    const u1 = db.collection("guias").orderBy("nombre").onSnapshot((s) =>
+      setGuias(s.docs.map((d) => ({ id: d.id, ...d.data() })))
+    );
+    const u2 = db.collection("empresas").orderBy("nombre").onSnapshot((s) =>
+      setEmpresas(s.docs.map((d) => ({ id: d.id, ...d.data() })).filter((e) => e.activo !== false))
+    );
+    const u3 = db.collection("tiposVehiculo").orderBy("nombre").onSnapshot((s) =>
+      setTiposVehiculo(s.docs.map((d) => ({ id: d.id, ...d.data() })).filter((t) => t.activo !== false))
+    );
+    const u4 = db
+      .collection("visitas")
+      .where("estado", "==", "en_curso")
+      .onSnapshot((s) =>
+        setVisitasEnCurso(
+          s.docs
+            .map((d) => ({ id: d.id, ...d.data() }))
+            .sort((a, b) => (b.fechaHoraIngreso?.seconds || 0) - (a.fechaHoraIngreso?.seconds || 0))
+        )
+      );
+    return () => {
+      u1();
+      u2();
+      u3();
+      u4();
+    };
+  }, []);
+
+  // Refresca el "tiempo transcurrido" de cada tarjeta cada 30 segundos.
+  useEffect(() => {
+    const i = setInterval(() => setTick((t) => t + 1), 30000);
+    return () => clearInterval(i);
+  }, []);
+
+  return (
+    <div>
+      <div className="page-header">
+        <div>
+          <div className="page-eyebrow">Sala de guías</div>
+          <h1>Visitas</h1>
+          <p className="page-desc">Registrá el ingreso de cada guía y su grupo al llegar a la sala.</p>
+        </div>
+      </div>
+
+      <FormularioVisita
+        guias={guias}
+        empresas={empresas}
+        tiposVehiculo={tiposVehiculo}
+        perfil={perfil}
+        mostrarToast={mostrarToast}
+      />
+
+      <div style={{ marginTop: 32 }}>
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 14 }}>
+          <h2 style={{ fontSize: 18 }}>Visitas en curso</h2>
+          <span className="badge badge-gold">{visitasEnCurso.length}</span>
+        </div>
+
+        {visitasEnCurso.length === 0 ? (
+          <div className="panel">
+            <div className="empty-state">
+              <div className="display">No hay guías en la sala en este momento</div>
+              <p>Los ingresos que registres van a aparecer acá.</p>
+            </div>
+          </div>
+        ) : (
+          <div className="ticket-grid">
+            {visitasEnCurso.map((v) => (
+              <div className="ticket" key={v.id}>
+                <div className="ticket-stub">{tiempoTranscurrido(v.fechaHoraIngreso)}</div>
+                <div className="ticket-perforation"></div>
+                <div className="ticket-body">
+                  <h3 style={{ fontSize: 16 }}>{v.guiaNombre}</h3>
+                  <div className="ticket-meta">
+                    <span><strong>Empresa:</strong> {v.empresaNombre}</span>
+                    <span><strong>Vehículo:</strong> {v.vehiculoTipoNombre} · {v.chapa}</span>
+                    <span><strong>Pasajeros:</strong> {v.cantPasajeros}</span>
+                    <span><strong>Ticket:</strong> {v.ticketEstacionamiento}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FormularioVisita({ guias, empresas, tiposVehiculo, perfil, mostrarToast }) {
+  const [nombreGuia, setNombreGuia] = useState("");
+  const [guiaSeleccionado, setGuiaSeleccionado] = useState(null);
+  const [mostrarSugerencias, setMostrarSugerencias] = useState(false);
+  const [empresaId, setEmpresaId] = useState("");
+  const [cantPasajeros, setCantPasajeros] = useState("");
+  const [vehiculoTipoId, setVehiculoTipoId] = useState("");
+  const [chapa, setChapa] = useState("");
+  const [ticket, setTicket] = useState("");
+  const [mostrarEscaner, setMostrarEscaner] = useState(false);
+  const [error, setError] = useState("");
+  const [cargando, setCargando] = useState(false);
+
+  const sugerencias =
+    nombreGuia.trim().length > 0
+      ? guias.filter((g) => g.nombre.toLowerCase().includes(nombreGuia.trim().toLowerCase())).slice(0, 6)
+      : [];
+
+  function elegirGuia(g) {
+    setGuiaSeleccionado(g);
+    setNombreGuia(g.nombre);
+    setMostrarSugerencias(false);
+  }
+
+  function cambiarNombreGuia(valor) {
+    setNombreGuia(valor);
+    setGuiaSeleccionado(null);
+    setMostrarSugerencias(true);
+  }
+
+  function limpiarFormulario() {
+    setNombreGuia("");
+    setGuiaSeleccionado(null);
+    setEmpresaId("");
+    setCantPasajeros("");
+    setVehiculoTipoId("");
+    setChapa("");
+    setTicket("");
+  }
+
+  async function registrarIngreso(e) {
+    e.preventDefault();
+    setError("");
+    if (!nombreGuia.trim() || !empresaId || !vehiculoTipoId || !chapa.trim() || !ticket.trim() || !cantPasajeros) {
+      setError("Completá todos los campos para registrar el ingreso.");
+      return;
+    }
+    setCargando(true);
+    try {
+      let guiaId = guiaSeleccionado ? guiaSeleccionado.id : null;
+      if (!guiaId) {
+        const nuevoGuia = await db.collection("guias").add({
+          nombre: nombreGuia.trim(),
+          creadoEn: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        guiaId = nuevoGuia.id;
+      }
+
+      const empresa = empresas.find((e) => e.id === empresaId);
+      const tipoVehiculo = tiposVehiculo.find((t) => t.id === vehiculoTipoId);
+
+      await db.collection("visitas").add({
+        guiaId,
+        guiaNombre: nombreGuia.trim(),
+        empresaId,
+        empresaNombre: empresa ? empresa.nombre : "",
+        vehiculoTipoId,
+        vehiculoTipoNombre: tipoVehiculo ? tipoVehiculo.nombre : "",
+        montoMinimoRequerido: tipoVehiculo ? Number(tipoVehiculo.montoMinimoCompra) || 0 : 0,
+        chapa: chapa.trim().toUpperCase(),
+        cantPasajeros: Number(cantPasajeros),
+        ticketEstacionamiento: ticket.trim(),
+        estado: "en_curso",
+        montoAcumulado: 0,
+        fechaHoraIngreso: firebase.firestore.FieldValue.serverTimestamp(),
+        usuarioIngresoId: perfil.id,
+        usuarioIngresoNombre: perfil.nombre
+      });
+
+      mostrarToast(`Ingreso registrado: ${nombreGuia.trim()}`);
+      limpiarFormulario();
+    } catch (err) {
+      console.error(err);
+      setError("No se pudo registrar el ingreso. Probá de nuevo.");
+    } finally {
+      setCargando(false);
+    }
+  }
+
+  return (
+    <div className="panel">
+      <div className="panel-header">
+        <h2>Nuevo ingreso</h2>
+      </div>
+      <div className="panel-body">
+        {error && <div className="form-error">{error}</div>}
+        <form onSubmit={registrarIngreso}>
+          <div className="field autocomplete">
+            <label>Guía</label>
+            <input
+              value={nombreGuia}
+              onChange={(e) => cambiarNombreGuia(e.target.value)}
+              onFocus={() => setMostrarSugerencias(true)}
+              onBlur={() => setTimeout(() => setMostrarSugerencias(false), 150)}
+              placeholder="Nombre y apellido"
+              autoComplete="off"
+              required
+            />
+            {mostrarSugerencias && nombreGuia.trim() && (
+              <div className="autocomplete-list">
+                {sugerencias.map((g) => (
+                  <div key={g.id} className="autocomplete-item" onMouseDown={() => elegirGuia(g)}>
+                    {g.nombre}
+                  </div>
+                ))}
+                {!sugerencias.some((g) => g.nombre.toLowerCase() === nombreGuia.trim().toLowerCase()) && (
+                  <div className="autocomplete-item crear-nuevo" onMouseDown={() => setMostrarSugerencias(false)}>
+                    + Crear guía nuevo: "{nombreGuia.trim()}"
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="field-row">
+            <div className="field">
+              <label>Empresa</label>
+              <select value={empresaId} onChange={(e) => setEmpresaId(e.target.value)} required>
+                <option value="">Seleccionar…</option>
+                {empresas.map((emp) => (
+                  <option key={emp.id} value={emp.id}>{emp.nombre}</option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label>Cantidad de pasajeros</label>
+              <input
+                type="number"
+                min="1"
+                value={cantPasajeros}
+                onChange={(e) => setCantPasajeros(e.target.value)}
+                required
+              />
+            </div>
+          </div>
+
+          <div className="field-row">
+            <div className="field">
+              <label>Tipo de vehículo</label>
+              <select value={vehiculoTipoId} onChange={(e) => setVehiculoTipoId(e.target.value)} required>
+                <option value="">Seleccionar…</option>
+                {tiposVehiculo.map((t) => (
+                  <option key={t.id} value={t.id}>{t.nombre}</option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label>Chapa</label>
+              <input value={chapa} onChange={(e) => setChapa(e.target.value)} placeholder="AB 123 CD" required />
+            </div>
+          </div>
+
+          <div className="field">
+            <label>Ticket de estacionamiento</label>
+            <div className="scan-row">
+              <input
+                value={ticket}
+                onChange={(e) => setTicket(e.target.value)}
+                placeholder="Escaneá o escribí el número"
+                required
+              />
+              <button type="button" className="btn btn-ghost" onClick={() => setMostrarEscaner(true)}>
+                📷 Escanear
+              </button>
+            </div>
+          </div>
+
+          <button className="btn btn-primary" disabled={cargando} style={{ width: "auto", padding: "11px 24px" }}>
+            {cargando ? "Registrando..." : "Registrar ingreso"}
+          </button>
+        </form>
+      </div>
+
+      {mostrarEscaner && (
+        <EscanerTicket
+          onDetectado={(texto) => {
+            setTicket(texto);
+            setMostrarEscaner(false);
+          }}
+          onClose={() => setMostrarEscaner(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Vista genérica de catálogo simple (Empresas / Tipos de vehículo)
 // ---------------------------------------------------------------------------
 
@@ -771,6 +1159,7 @@ function ModalCatalogo({ titulo, coleccion, campos, item, onClose, mostrarToast 
 
 const NAV_ITEMS = [
   { id: "panel", label: "Panel", icon: "◆", permiso: null },
+  { id: "visitas", label: "Visitas", icon: "◈", permiso: "registrar_visitas" },
   { id: "usuarios", label: "Usuarios y roles", icon: "◈", permiso: "gestionar_usuarios" },
   { id: "empresas", label: "Empresas", icon: "◇", permiso: "gestionar_catalogos" },
   { id: "vehiculos", label: "Tipos de vehículo", icon: "◇", permiso: "gestionar_catalogos" }
@@ -797,6 +1186,9 @@ function Shell({ perfil }) {
   const itemsVisibles = NAV_ITEMS.filter((i) => !i.permiso || tienePermiso(perfil, i.permiso));
 
   function renderVista() {
+    if (vista === "visitas" && tienePermiso(perfil, "registrar_visitas")) {
+      return <VisitasView perfil={perfil} mostrarToast={mostrarToast} />;
+    }
     if (vista === "usuarios" && tienePermiso(perfil, "gestionar_usuarios")) {
       return <UsuariosView mostrarToast={mostrarToast} />;
     }

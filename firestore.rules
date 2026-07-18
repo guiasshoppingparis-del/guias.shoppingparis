@@ -56,6 +56,19 @@ service cloud.firestore {
       allow write: if estaLogueado() && tienePermiso('gestionar_catalogos');
     }
 
+    match /guias/{guiaId} {
+      allow read: if estaLogueado();
+      allow write: if estaLogueado() && tienePermiso('registrar_visitas');
+    }
+
+    match /visitas/{visitaId} {
+      allow read: if estaLogueado();
+      allow create: if estaLogueado() && tienePermiso('registrar_visitas');
+      allow update: if estaLogueado()
+        && (tienePermiso('registrar_visitas') || tienePermiso('liberar_estacionamiento'));
+      allow delete: if estaLogueado() && tienePermiso('gestionar_usuarios');
+    }
+
     match /config/{docId} {
       // Lectura pública: la app necesita saber si falta el setup inicial
       // (config/meta) y el logo (config/branding) antes de que haya login.

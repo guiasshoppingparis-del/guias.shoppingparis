@@ -606,7 +606,88 @@ table.data-table {
   margin-bottom: 6px;
 }
 
+.ticket-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 14px;
+}
+
+.ticket-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 8px;
+}
+
+.ticket-meta strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.autocomplete {
+  position: relative;
+}
+
+.autocomplete-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 10;
+}
+
+.autocomplete-item {
+  padding: 9px 12px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.autocomplete-item:hover {
+  background: var(--paper);
+}
+
+.autocomplete-item.crear-nuevo {
+  color: var(--gold);
+  font-weight: 600;
+  border-top: 1px solid var(--line);
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+@media (max-width: 560px) {
+  .field-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.scan-row {
+  display: flex;
+  gap: 8px;
+}
+
+.scan-row input {
+  flex: 1;
+}
+
+#lector-qr {
+  border-radius: 10px;
+  overflow: hidden;
+}
+
 /* ---------- Modal ---------- */
+
 
 .modal-backdrop {
   position: fixed;
