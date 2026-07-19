@@ -2,6 +2,16 @@
 
 Versionado simplificado `vMAJOR.MINOR`. MAJOR = cambios de arquitectura o que rompen datos existentes. MINOR = funcionalidad nueva incremental.
 
+## v0.6 — 2026-07-18
+
+Ranking de guías + fidelidad. Además, pantalla "Guías" para corregir nombres cargados mal.
+
+- Nueva pantalla "Ranking" (permiso `ver_reportes`): puntaje combinado por guía = (pasajeros × peso) + (visitas × peso) + (monto de compras × peso), calculado solo sobre visitas `liberado` del período consultado.
+- Filtro por rango de fechas con atajos "Este mes" / "Últimos 3 meses" / "Este año".
+- Pesos configurables desde la propia pantalla (botón "Configurar pesos", visible para `gestionar_catalogos`), guardados en `config/fidelidad`.
+- Podio con medallas para el top 3.
+- Nueva pantalla "Guías" (permiso `registrar_visitas`) para corregir el nombre de un guía cargado mal; si tiene una visita en curso, se sincroniza automáticamente.
+
 ## v0.5 — 2026-07-18
 
 Reportes + mayúsculas en todos los formularios.
@@ -60,7 +70,6 @@ Estructura base del sistema.
 
 | Versión | Alcance |
 |---|---|
-| v0.6 | Ranking de guías + fidelidad (fórmula combinada y configurable) |
 | v0.7 | Mapa de calor de afluencia |
 | v0.8 | Logo configurable (Firebase Storage) en header y encabezado de reportes/PDFs |
 | v1.0 | Primera versión estable end-to-end |

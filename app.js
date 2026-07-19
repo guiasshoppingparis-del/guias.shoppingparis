@@ -268,16 +268,15 @@ function PanelInicio({ perfil }) {
       </div>
 
       <div className="ticket">
-        <div className="ticket-stub">v0.5</div>
+        <div className="ticket-stub">v0.6</div>
         <div className="ticket-perforation"></div>
         <div className="ticket-body">
           <h2 style={{ fontSize: 16, marginBottom: 6 }}>Roadmap del sistema</h2>
           <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 10 }}>
-            Ya se pueden consultar reportes de personas y vehículos por período, y
-            revisar los guías no liberados. Las próximas versiones suman ranking de
-            fidelidad y mapa de calor.
+            Ya está el ranking de guías con puntaje de fidelidad configurable.
+            La próxima versión suma el mapa de calor de afluencia.
           </p>
-          <span className="badge badge-gold">Próximo: v0.6 — Ranking y fidelidad</span>
+          <span className="badge badge-gold">Próximo: v0.7 — Mapa de calor</span>
         </div>
       </div>
     </div>
@@ -1711,6 +1710,238 @@ function ReportesView() {
 }
 
 // ---------------------------------------------------------------------------
+// Vista: Ranking de guías y fidelidad
+// ---------------------------------------------------------------------------
+
+const PESOS_FIDELIDAD_POR_DEFECTO = { pesoPasajeros: 1, pesoVisitas: 5, pesoMonto: 0.001 };
+
+function RankingView({ perfil }) {
+  const hoy = new Date();
+  const inicioMes = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
+  const [desde, setDesde] = useState(fechaISO(inicioMes));
+  const [hasta, setHasta] = useState(fechaISO(hoy));
+  const [visitas, setVisitas] = useState([]);
+  const [pesos, setPesos] = useState(PESOS_FIDELIDAD_POR_DEFECTO);
+  const [cargando, setCargando] = useState(false);
+  const [error, setError] = useState("");
+  const [consultado, setConsultado] = useState(false);
+  const [modalPesos, setModalPesos] = useState(false);
+
+  useEffect(() => {
+    db.collection("config").doc("fidelidad").get().then((doc) => {
+      if (doc.exists) setPesos({ ...PESOS_FIDELIDAD_POR_DEFECTO, ...doc.data() });
+    });
+  }, []);
+
+  async function consultar(e) {
+    if (e) e.preventDefault();
+    setCargando(true);
+    setError("");
+    try {
+      const inicio = firebase.firestore.Timestamp.fromDate(new Date(desde + "T00:00:00"));
+      const fin = firebase.firestore.Timestamp.fromDate(new Date(hasta + "T23:59:59"));
+      // Se trae todo el rango (sin filtrar por estado en la consulta) para no
+      // requerir un índice compuesto en Firestore; el filtro de "liberado" se
+      // hace acá mismo, del lado del cliente.
+      const snap = await db
+        .collection("visitas")
+        .where("fechaHoraIngreso", ">=", inicio)
+        .where("fechaHoraIngreso", "<=", fin)
+        .get();
+      setVisitas(snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((v) => v.estado === "liberado"));
+      setConsultado(true);
+    } catch (err) {
+      console.error(err);
+      setError("No se pudo generar el ranking. Probá de nuevo.");
+    } finally {
+      setCargando(false);
+    }
+  }
+
+  useEffect(() => {
+    consultar();
+  }, []);
+
+  function aplicarPreset(preset) {
+    const d = new Date();
+    if (preset === "mes") {
+      setDesde(fechaISO(new Date(d.getFullYear(), d.getMonth(), 1)));
+      setHasta(fechaISO(d));
+    } else if (preset === "trimestre") {
+      setDesde(fechaISO(new Date(d.getFullYear(), d.getMonth() - 2, 1)));
+      setHasta(fechaISO(d));
+    } else if (preset === "año") {
+      setDesde(fechaISO(new Date(d.getFullYear(), 0, 1)));
+      setHasta(fechaISO(d));
+    }
+  }
+
+  const ranking = React.useMemo(() => {
+    const porGuia = {};
+    visitas.forEach((v) => {
+      if (!porGuia[v.guiaId]) {
+        porGuia[v.guiaId] = { guiaId: v.guiaId, guiaNombre: v.guiaNombre, pasajeros: 0, visitas: 0, monto: 0 };
+      }
+      porGuia[v.guiaId].pasajeros += Number(v.cantPasajeros) || 0;
+      porGuia[v.guiaId].visitas += 1;
+      porGuia[v.guiaId].monto += Number(v.montoAcumulado) || 0;
+    });
+    return Object.values(porGuia)
+      .map((g) => ({
+        ...g,
+        puntaje: g.pasajeros * pesos.pesoPasajeros + g.visitas * pesos.pesoVisitas + g.monto * pesos.pesoMonto
+      }))
+      .sort((a, b) => b.puntaje - a.puntaje);
+  }, [visitas, pesos]);
+
+  const medallas = ["🥇", "🥈", "🥉"];
+
+  return (
+    <div>
+      <div className="page-header">
+        <div>
+          <div className="page-eyebrow">Fidelidad</div>
+          <h1>Ranking de guías</h1>
+          <p className="page-desc">Puntaje combinado según pasajeros, visitas y compras — solo cuentan las visitas liberadas.</p>
+        </div>
+        {tienePermiso(perfil, "gestionar_catalogos") && (
+          <button className="btn btn-ghost" onClick={() => setModalPesos(true)}>Configurar pesos</button>
+        )}
+      </div>
+
+      <div className="panel" style={{ marginBottom: 24 }}>
+        <div className="panel-body">
+          <form onSubmit={consultar} style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+            <div className="field" style={{ marginBottom: 0 }}>
+              <label>Desde</label>
+              <input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} required />
+            </div>
+            <div className="field" style={{ marginBottom: 0 }}>
+              <label>Hasta</label>
+              <input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} required />
+            </div>
+            <button className="btn btn-gold" disabled={cargando} style={{ width: "auto", padding: "11px 20px" }}>
+              {cargando ? "Consultando..." : "Consultar"}
+            </button>
+            <div style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
+              <button type="button" className="btn btn-ghost" onClick={() => aplicarPreset("mes")}>Este mes</button>
+              <button type="button" className="btn btn-ghost" onClick={() => aplicarPreset("trimestre")}>Últimos 3 meses</button>
+              <button type="button" className="btn btn-ghost" onClick={() => aplicarPreset("año")}>Este año</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      {error && <div className="form-error">{error}</div>}
+
+      {consultado && (
+        <div className="panel">
+          <div className="panel-body" style={{ padding: 0 }}>
+            {ranking.length === 0 ? (
+              <div className="empty-state">
+                <div className="display">No hay visitas liberadas en este período</div>
+                <p>El ranking se arma solo con visitas que llegaron al monto mínimo.</p>
+              </div>
+            ) : (
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th></th>
+                    <th>Guía</th>
+                    <th>Pasajeros</th>
+                    <th>Visitas</th>
+                    <th>Compras</th>
+                    <th>Puntaje</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ranking.map((g, i) => (
+                    <tr key={g.guiaId}>
+                      <td style={{ fontSize: 18 }}>{medallas[i] || i + 1}</td>
+                      <td>{g.guiaNombre}</td>
+                      <td>{g.pasajeros}</td>
+                      <td>{g.visitas}</td>
+                      <td>$ {g.monto.toLocaleString("es-AR")}</td>
+                      <td><span className="badge badge-gold">{Math.round(g.puntaje).toLocaleString("es-AR")}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
+      {modalPesos && (
+        <ModalPesosFidelidad
+          pesos={pesos}
+          onGuardado={(nuevos) => setPesos(nuevos)}
+          onClose={() => setModalPesos(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function ModalPesosFidelidad({ pesos, onGuardado, onClose }) {
+  const [pesoPasajeros, setPesoPasajeros] = useState(pesos.pesoPasajeros);
+  const [pesoVisitas, setPesoVisitas] = useState(pesos.pesoVisitas);
+  const [pesoMonto, setPesoMonto] = useState(pesos.pesoMonto);
+  const [cargando, setCargando] = useState(false);
+
+  async function guardar(e) {
+    e.preventDefault();
+    setCargando(true);
+    try {
+      const nuevos = {
+        pesoPasajeros: Number(pesoPasajeros) || 0,
+        pesoVisitas: Number(pesoVisitas) || 0,
+        pesoMonto: Number(pesoMonto) || 0
+      };
+      await db.collection("config").doc("fidelidad").set(nuevos);
+      onGuardado(nuevos);
+      onClose();
+    } finally {
+      setCargando(false);
+    }
+  }
+
+  return (
+    <Modal
+      titulo="Configurar pesos de fidelidad"
+      onClose={onClose}
+      footer={
+        <React.Fragment>
+          <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-gold" onClick={guardar} disabled={cargando}>
+            {cargando ? "Guardando..." : "Guardar"}
+          </button>
+        </React.Fragment>
+      }
+    >
+      <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 16 }}>
+        Puntaje = (pasajeros × peso) + (visitas × peso) + (monto de compras × peso).
+        Ajustá los pesos según qué factor querés que pese más en el ranking.
+      </p>
+      <form onSubmit={guardar}>
+        <div className="field">
+          <label>Peso por pasajero</label>
+          <input type="number" step="0.01" value={pesoPasajeros} onChange={(e) => setPesoPasajeros(e.target.value)} required />
+        </div>
+        <div className="field">
+          <label>Peso por visita liberada</label>
+          <input type="number" step="0.01" value={pesoVisitas} onChange={(e) => setPesoVisitas(e.target.value)} required />
+        </div>
+        <div className="field">
+          <label>Peso por monto de compra (por unidad de $)</label>
+          <input type="number" step="0.0001" value={pesoMonto} onChange={(e) => setPesoMonto(e.target.value)} required />
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Shell principal (sidebar + contenido)
 // ---------------------------------------------------------------------------
 
@@ -1718,6 +1949,7 @@ const NAV_ITEMS = [
   { id: "panel", label: "Panel", icon: "◆", permiso: null },
   { id: "visitas", label: "Visitas", icon: "◈", permiso: "registrar_visitas" },
   { id: "guias", label: "Guías", icon: "◈", permiso: "registrar_visitas" },
+  { id: "ranking", label: "Ranking", icon: "◈", permiso: "ver_reportes" },
   { id: "reportes", label: "Reportes", icon: "◈", permiso: "ver_reportes" },
   { id: "usuarios", label: "Usuarios y roles", icon: "◈", permiso: "gestionar_usuarios" },
   { id: "empresas", label: "Empresas", icon: "◇", permiso: "gestionar_catalogos" },
@@ -1753,6 +1985,9 @@ function Shell({ perfil }) {
     }
     if (vista === "guias" && tienePermiso(perfil, "registrar_visitas")) {
       return <GuiasView mostrarToast={mostrarToast} />;
+    }
+    if (vista === "ranking" && tienePermiso(perfil, "ver_reportes")) {
+      return <RankingView perfil={perfil} />;
     }
     if (vista === "usuarios" && tienePermiso(perfil, "gestionar_usuarios")) {
       return <UsuariosView mostrarToast={mostrarToast} />;
