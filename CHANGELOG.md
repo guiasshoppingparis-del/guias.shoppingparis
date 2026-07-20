@@ -2,6 +2,15 @@
 
 Versionado simplificado `vMAJOR.MINOR`. MAJOR = cambios de arquitectura o que rompen datos existentes. MINOR = funcionalidad nueva incremental.
 
+## v0.8 — 2026-07-18
+
+Logo configurable.
+
+- Nueva pantalla "Configuración" (permiso `gestionar_catalogos`) para subir el logo del shopping (JPG/PNG, hasta 2MB) a Firebase Storage.
+- El logo reemplaza el placeholder "SP" en el menú lateral apenas se sube.
+- Se incrusta automáticamente en el encabezado del ticket de liberación en PDF; si no se puede cargar (sin logo configurado, o problema de red/CORS), el PDF se genera igual sin logo, sin romper el flujo.
+- Nuevo archivo `storage.rules` con las reglas de seguridad de Firebase Storage (se pegan en una pestaña distinta a las de Firestore).
+
 ## v0.7 — 2026-07-18
 
 Mapa de calor de afluencia.
@@ -79,5 +88,4 @@ Estructura base del sistema.
 
 | Versión | Alcance |
 |---|---|
-| v0.8 | Logo configurable (Firebase Storage) en header y encabezado de reportes/PDFs |
 | v1.0 | Primera versión estable end-to-end |

@@ -22,7 +22,8 @@ No hay proceso de compilación: se edita cualquier archivo y se sube tal cual.
 2. **Authentication** → Sign-in method → habilitar **Email/contraseña**.
 3. **Firestore Database** → crear base de datos (modo producción).
 4. En **Reglas** de Firestore, pegar el contenido de `firestore.rules` de este repo.
-5. **Configuración del proyecto** → "Tus apps" → agregar app Web → copiar el objeto `firebaseConfig`.
+5. **Storage** (menú izquierdo) → si aparece "Comenzar" / "Get started", crearlo también. En la pestaña **Reglas** de Storage (distinta a la de Firestore), pegar el contenido de `storage.rules` de este repo.
+6. **Configuración del proyecto** → "Tus apps" → agregar app Web → copiar el objeto `firebaseConfig`.
 
 ### 2. Configurar la app
 

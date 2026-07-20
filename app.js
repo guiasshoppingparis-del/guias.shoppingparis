@@ -268,15 +268,16 @@ function PanelInicio({ perfil }) {
       </div>
 
       <div className="ticket">
-        <div className="ticket-stub">v0.7</div>
+        <div className="ticket-stub">v0.8</div>
         <div className="ticket-perforation"></div>
         <div className="ticket-body">
           <h2 style={{ fontSize: 16, marginBottom: 6 }}>Roadmap del sistema</h2>
           <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 10 }}>
-            Ya está el mapa de calor para ver los horarios de mayor afluencia.
-            La próxima versión suma el logo configurable del shopping.
+            Ya se puede subir el logo del shopping desde Configuración — aparece
+            en el menú y en el ticket de liberación en PDF. Esta es la última
+            pieza antes de la versión estable.
           </p>
-          <span className="badge badge-gold">Próximo: v0.8 — Logo configurable</span>
+          <span className="badge badge-gold">Próximo: v1.0 — Versión estable</span>
         </div>
       </div>
     </div>
@@ -978,20 +979,65 @@ function formatearFechaHora(fecha) {
   return d.toLocaleString("es-PY", { dateStyle: "short", timeStyle: "short" });
 }
 
-function generarPdfLiberacion(visita, usuarioNombre) {
+// Intenta traer el logo configurado y convertirlo a base64 para incrustarlo
+// en el PDF. Si falla (sin logo, sin conexión, o el bucket no tiene CORS
+// habilitado para lectura), devuelve null y el PDF se genera igual sin logo.
+async function obtenerLogoParaPdf() {
+  try {
+    const doc = await db.collection("config").doc("branding").get();
+    const url = doc.exists ? doc.data().logoUrl : null;
+    if (!url) return null;
+    const resp = await fetch(url);
+    const blob = await resp.blob();
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+    const formato = dataUrl.startsWith("data:image/png") ? "PNG" : "JPEG";
+    return { dataUrl, formato };
+  } catch (err) {
+    console.warn("No se pudo cargar el logo para el PDF:", err);
+    return null;
+  }
+}
+
+async function generarPdfLiberacion(visita, usuarioNombre) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit: "mm", format: [100, 150] });
 
   const margen = 10;
   let y = 16;
 
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(14);
-  doc.text("SHOPPING PARIS", margen, y);
-  y += 6;
-  doc.setFontSize(10);
-  doc.text("Comprobante de liberación de estacionamiento", margen, y);
-  y += 4;
+  const logo = await obtenerLogoParaPdf();
+
+  if (logo) {
+    try {
+      doc.addImage(logo.dataUrl, logo.formato, margen, 8, 18, 18);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(13);
+      doc.text("SHOPPING PARIS", margen + 22, 15);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.text("Comprobante de liberación", margen + 22, 21);
+      y = 32;
+    } catch (err) {
+      console.warn("No se pudo incrustar el logo en el PDF:", err);
+    }
+  }
+
+  if (y === 16) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(14);
+    doc.text("SHOPPING PARIS", margen, y);
+    y += 6;
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    doc.text("Comprobante de liberación de estacionamiento", margen, y);
+    y += 4;
+  }
+
   doc.setLineWidth(0.3);
   doc.line(margen, y, 100 - margen, y);
   y += 8;
@@ -1070,7 +1116,7 @@ function ModalLiberarVisita({ visita, perfil, onClose, mostrarToast }) {
         usuarioSalidaId: perfil.id,
         usuarioSalidaNombre: perfil.nombre
       });
-      generarPdfLiberacion(visita, perfil.nombre);
+      await generarPdfLiberacion(visita, perfil.nombre);
       mostrarToast(`Estacionamiento liberado: ${visita.guiaNombre}`);
       onClose();
     } catch (err) {
@@ -2127,6 +2173,96 @@ function MapaCalorView() {
 }
 
 // ---------------------------------------------------------------------------
+// Vista: Configuración (logo del shopping)
+// ---------------------------------------------------------------------------
+
+function ConfiguracionView({ mostrarToast }) {
+  const [logoUrl, setLogoUrl] = useState(null);
+  const [subiendo, setSubiendo] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const unsub = db.collection("config").doc("branding").onSnapshot((doc) => {
+      setLogoUrl(doc.exists ? doc.data().logoUrl : null);
+    });
+    return () => unsub();
+  }, []);
+
+  async function subirLogo(e) {
+    const archivo = e.target.files[0];
+    e.target.value = ""; // permite volver a elegir el mismo archivo si hace falta
+    if (!archivo) return;
+
+    setError("");
+    const tiposValidos = ["image/png", "image/jpeg", "image/jpg"];
+    if (!tiposValidos.includes(archivo.type)) {
+      setError("El logo tiene que ser un archivo JPG o PNG.");
+      return;
+    }
+    if (archivo.size > 2 * 1024 * 1024) {
+      setError("El archivo pesa más de 2MB. Subí una imagen más liviana.");
+      return;
+    }
+
+    setSubiendo(true);
+    try {
+      const extension = archivo.type === "image/png" ? "png" : "jpg";
+      const ref = storage.ref(`logo/logo.${extension}`);
+      await ref.put(archivo);
+      const url = await ref.getDownloadURL();
+      await db.collection("config").doc("branding").set({ logoUrl: url });
+      mostrarToast("Logo actualizado.");
+    } catch (err) {
+      console.error(err);
+      setError("No se pudo subir el logo. Probá de nuevo.");
+    } finally {
+      setSubiendo(false);
+    }
+  }
+
+  return (
+    <div>
+      <div className="page-header">
+        <div>
+          <div className="page-eyebrow">Configuración</div>
+          <h1>Logo del shopping</h1>
+          <p className="page-desc">Se muestra en el menú lateral y en el encabezado del ticket de liberación en PDF.</p>
+        </div>
+      </div>
+
+      <div className="panel">
+        <div className="panel-body">
+          {error && <div className="form-error">{error}</div>}
+
+          <div style={{ display: "flex", alignItems: "center", gap: 20, marginBottom: 20 }}>
+            {logoUrl ? (
+              <img src={logoUrl} alt="Logo actual" style={{ width: 72, height: 72, borderRadius: 10, objectFit: "cover", border: "1px solid var(--line)" }} />
+            ) : (
+              <div className="brand-logo-placeholder" style={{ width: 72, height: 72, fontSize: 22 }}>SP</div>
+            )}
+            <div>
+              <p style={{ fontSize: 14, marginBottom: 4 }}>{logoUrl ? "Logo actual" : "Todavía no se subió un logo"}</p>
+              <p style={{ fontSize: 12, color: "var(--text-muted)" }}>Formato JPG o PNG, hasta 2MB.</p>
+            </div>
+          </div>
+
+          <label className="btn btn-gold" style={{ width: "auto", padding: "11px 20px", display: "inline-block", cursor: "pointer" }}>
+            {subiendo ? "Subiendo..." : logoUrl ? "Cambiar logo" : "Subir logo"}
+            <input
+              type="file"
+              accept="image/png,image/jpeg"
+              onChange={subirLogo}
+              disabled={subiendo}
+              style={{ display: "none" }}
+            />
+          </label>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Shell principal (sidebar + contenido)
 // ---------------------------------------------------------------------------
 
@@ -2139,13 +2275,15 @@ const NAV_ITEMS = [
   { id: "reportes", label: "Reportes", icon: "◈", permiso: "ver_reportes" },
   { id: "usuarios", label: "Usuarios y roles", icon: "◈", permiso: "gestionar_usuarios" },
   { id: "empresas", label: "Empresas", icon: "◇", permiso: "gestionar_catalogos" },
-  { id: "vehiculos", label: "Tipos de vehículo", icon: "◇", permiso: "gestionar_catalogos" }
+  { id: "vehiculos", label: "Tipos de vehículo", icon: "◇", permiso: "gestionar_catalogos" },
+  { id: "configuracion", label: "Configuración", icon: "◇", permiso: "gestionar_catalogos" }
 ];
 
 function Shell({ perfil }) {
   const [vista, setVista] = useState("panel");
   const [toast, setToast] = useState("");
   const [online, setOnline] = useState(navigator.onLine);
+  const [logoUrl, setLogoUrl] = useState(null);
 
   useEffect(() => {
     const on = () => setOnline(true);
@@ -2156,6 +2294,13 @@ function Shell({ perfil }) {
       window.removeEventListener("online", on);
       window.removeEventListener("offline", off);
     };
+  }, []);
+
+  useEffect(() => {
+    const unsub = db.collection("config").doc("branding").onSnapshot((doc) => {
+      setLogoUrl(doc.exists ? doc.data().logoUrl : null);
+    });
+    return () => unsub();
   }, []);
 
   const mostrarToast = useCallback((msg) => setToast(msg), []);
@@ -2177,6 +2322,9 @@ function Shell({ perfil }) {
     }
     if (vista === "mapaCalor" && tienePermiso(perfil, "ver_reportes")) {
       return <MapaCalorView />;
+    }
+    if (vista === "configuracion" && tienePermiso(perfil, "gestionar_catalogos")) {
+      return <ConfiguracionView mostrarToast={mostrarToast} />;
     }
     if (vista === "usuarios" && tienePermiso(perfil, "gestionar_usuarios")) {
       return <UsuariosView mostrarToast={mostrarToast} />;
@@ -2213,7 +2361,11 @@ function Shell({ perfil }) {
     <div className="shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-logo-placeholder">SP</div>
+          {logoUrl ? (
+            <img src={logoUrl} alt="Logo" className="brand-logo" />
+          ) : (
+            <div className="brand-logo-placeholder">SP</div>
+          )}
           <div className="brand-text">
             <div className="brand-title">Shopping Paris</div>
             <div className="brand-sub">Sala de Guías</div>

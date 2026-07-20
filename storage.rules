@@ -1,0 +1,21 @@
+rules_version = '2';
+
+// Reglas de seguridad de Firebase Storage — Sistema de Gestión de Visitas — Shopping Paris
+// Pegar en: Firebase Console > Storage > Reglas (es una pestaña distinta a la de Firestore)
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /logo/{archivo} {
+      // Lectura pública: el logo se muestra en la app antes de filtrar por rol.
+      allow read: if true;
+
+      // Escritura: cualquier usuario logueado, siempre que sea una imagen
+      // JPG/PNG de hasta 2MB. La app ya oculta el botón de subida a quien no
+      // tiene el permiso "gestionar_catalogos"; esta regla es una segunda
+      // capa de validación (tamaño y tipo de archivo).
+      allow write: if request.auth != null
+        && request.resource.size < 2 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|jpg|png)');
+    }
+  }
+}
