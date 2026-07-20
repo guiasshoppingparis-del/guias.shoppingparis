@@ -2,6 +2,15 @@
 
 Versionado simplificado `vMAJOR.MINOR`. MAJOR = cambios de arquitectura o que rompen datos existentes. MINOR = funcionalidad nueva incremental.
 
+## v0.7 — 2026-07-18
+
+Mapa de calor de afluencia.
+
+- Nueva pantalla "Mapa de calor" (permiso `ver_reportes`): ingresos por día de la semana × horario (8:00 a 22:00), con intensidad de color según cantidad de ingresos.
+- Filtro por rango de fechas con los mismos atajos que Ranking ("Este mes" / "Últimos 3 meses" / "Este año").
+- Destaca automáticamente el día y horario de mayor afluencia del período consultado.
+- Referencia de color (menor → mayor afluencia) al pie del mapa.
+
 ## v0.6 — 2026-07-18
 
 Ranking de guías + fidelidad. Además, pantalla "Guías" para corregir nombres cargados mal.
@@ -70,6 +79,5 @@ Estructura base del sistema.
 
 | Versión | Alcance |
 |---|---|
-| v0.7 | Mapa de calor de afluencia |
 | v0.8 | Logo configurable (Firebase Storage) en header y encabezado de reportes/PDFs |
 | v1.0 | Primera versión estable end-to-end |

@@ -268,15 +268,15 @@ function PanelInicio({ perfil }) {
       </div>
 
       <div className="ticket">
-        <div className="ticket-stub">v0.6</div>
+        <div className="ticket-stub">v0.7</div>
         <div className="ticket-perforation"></div>
         <div className="ticket-body">
           <h2 style={{ fontSize: 16, marginBottom: 6 }}>Roadmap del sistema</h2>
           <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 10 }}>
-            Ya está el ranking de guías con puntaje de fidelidad configurable.
-            La próxima versión suma el mapa de calor de afluencia.
+            Ya está el mapa de calor para ver los horarios de mayor afluencia.
+            La próxima versión suma el logo configurable del shopping.
           </p>
-          <span className="badge badge-gold">Próximo: v0.7 — Mapa de calor</span>
+          <span className="badge badge-gold">Próximo: v0.8 — Logo configurable</span>
         </div>
       </div>
     </div>
@@ -1942,6 +1942,191 @@ function ModalPesosFidelidad({ pesos, onGuardado, onClose }) {
 }
 
 // ---------------------------------------------------------------------------
+// Vista: Mapa de calor de afluencia
+// ---------------------------------------------------------------------------
+
+const DIAS_SEMANA = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+const ORDEN_DIA_JS = [1, 2, 3, 4, 5, 6, 0]; // reordena getDay() (0=Dom) para empezar en lunes
+const HORAS_MAPA = Array.from({ length: 14 }, (_, i) => i + 8); // 8:00 a 21:00
+
+function MapaCalorView() {
+  const hoy = new Date();
+  const inicioMes = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
+  const [desde, setDesde] = useState(fechaISO(inicioMes));
+  const [hasta, setHasta] = useState(fechaISO(hoy));
+  const [visitas, setVisitas] = useState([]);
+  const [cargando, setCargando] = useState(false);
+  const [error, setError] = useState("");
+  const [consultado, setConsultado] = useState(false);
+
+  async function consultar(e) {
+    if (e) e.preventDefault();
+    setCargando(true);
+    setError("");
+    try {
+      const inicio = firebase.firestore.Timestamp.fromDate(new Date(desde + "T00:00:00"));
+      const fin = firebase.firestore.Timestamp.fromDate(new Date(hasta + "T23:59:59"));
+      const snap = await db
+        .collection("visitas")
+        .where("fechaHoraIngreso", ">=", inicio)
+        .where("fechaHoraIngreso", "<=", fin)
+        .get();
+      setVisitas(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setConsultado(true);
+    } catch (err) {
+      console.error(err);
+      setError("No se pudo generar el mapa de calor. Probá de nuevo.");
+    } finally {
+      setCargando(false);
+    }
+  }
+
+  useEffect(() => {
+    consultar();
+  }, []);
+
+  function aplicarPreset(preset) {
+    const d = new Date();
+    if (preset === "mes") {
+      setDesde(fechaISO(new Date(d.getFullYear(), d.getMonth(), 1)));
+      setHasta(fechaISO(d));
+    } else if (preset === "trimestre") {
+      setDesde(fechaISO(new Date(d.getFullYear(), d.getMonth() - 2, 1)));
+      setHasta(fechaISO(d));
+    } else if (preset === "año") {
+      setDesde(fechaISO(new Date(d.getFullYear(), 0, 1)));
+      setHasta(fechaISO(d));
+    }
+  }
+
+  const matriz = React.useMemo(() => {
+    const m = Array.from({ length: 7 }, () => Array(HORAS_MAPA.length).fill(0));
+    visitas.forEach((v) => {
+      if (!v.fechaHoraIngreso) return;
+      const fecha = v.fechaHoraIngreso.toDate ? v.fechaHoraIngreso.toDate() : new Date(v.fechaHoraIngreso);
+      const filaDia = ORDEN_DIA_JS.indexOf(fecha.getDay());
+      const colHora = HORAS_MAPA.indexOf(fecha.getHours());
+      if (filaDia >= 0 && colHora >= 0) m[filaDia][colHora] += 1;
+    });
+    return m;
+  }, [visitas]);
+
+  const maximo = Math.max(1, ...matriz.flat());
+
+  let pico = null;
+  matriz.forEach((fila, i) => {
+    fila.forEach((valor, j) => {
+      if (!pico || valor > pico.valor) pico = { valor, dia: DIAS_SEMANA[i], hora: HORAS_MAPA[j] };
+    });
+  });
+
+  return (
+    <div>
+      <div className="page-header">
+        <div>
+          <div className="page-eyebrow">Afluencia</div>
+          <h1>Mapa de calor</h1>
+          <p className="page-desc">Ingresos por día de la semana y horario (8:00 a 22:00), para identificar los momentos de mayor afluencia.</p>
+        </div>
+      </div>
+
+      <div className="panel" style={{ marginBottom: 24 }}>
+        <div className="panel-body">
+          <form onSubmit={consultar} style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+            <div className="field" style={{ marginBottom: 0 }}>
+              <label>Desde</label>
+              <input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} required />
+            </div>
+            <div className="field" style={{ marginBottom: 0 }}>
+              <label>Hasta</label>
+              <input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} required />
+            </div>
+            <button className="btn btn-gold" disabled={cargando} style={{ width: "auto", padding: "11px 20px" }}>
+              {cargando ? "Consultando..." : "Consultar"}
+            </button>
+            <div style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
+              <button type="button" className="btn btn-ghost" onClick={() => aplicarPreset("mes")}>Este mes</button>
+              <button type="button" className="btn btn-ghost" onClick={() => aplicarPreset("trimestre")}>Últimos 3 meses</button>
+              <button type="button" className="btn btn-ghost" onClick={() => aplicarPreset("año")}>Este año</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      {error && <div className="form-error">{error}</div>}
+
+      {consultado && (
+        <React.Fragment>
+          {pico && pico.valor > 0 && (
+            <div className="ticket" style={{ marginBottom: 20 }}>
+              <div className="ticket-stub">PICO</div>
+              <div className="ticket-perforation"></div>
+              <div className="ticket-body">
+                <h3 style={{ fontSize: 15 }}>Mayor afluencia</h3>
+                <p style={{ fontSize: 14, color: "var(--text-muted)", marginTop: 4 }}>
+                  {pico.dia} de {pico.hora}:00 a {pico.hora + 1}:00 — {pico.valor} {pico.valor === 1 ? "ingreso" : "ingresos"}
+                </p>
+              </div>
+            </div>
+          )}
+
+          <div className="panel">
+            <div className="panel-body" style={{ overflowX: "auto" }}>
+              <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 11 }}>
+                <thead>
+                  <tr>
+                    <th></th>
+                    {HORAS_MAPA.map((h) => (
+                      <th key={h} style={{ padding: "4px 2px", color: "var(--text-muted)", fontWeight: 600 }}>{h}h</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {DIAS_SEMANA.map((dia, i) => (
+                    <tr key={dia}>
+                      <td style={{ padding: "4px 8px", fontWeight: 600, color: "var(--ink)", whiteSpace: "nowrap" }}>{dia}</td>
+                      {matriz[i].map((valor, j) => {
+                        const intensidad = valor > 0 ? 0.12 + 0.8 * (valor / maximo) : 0.05;
+                        return (
+                          <td
+                            key={j}
+                            title={`${dia} ${HORAS_MAPA[j]}:00 — ${valor} ${valor === 1 ? "ingreso" : "ingresos"}`}
+                            style={{
+                              background: `rgba(184, 147, 95, ${intensidad})`,
+                              color: intensidad > 0.55 ? "#fff" : "var(--ink)",
+                              textAlign: "center",
+                              padding: "8px 4px",
+                              minWidth: 26,
+                              borderRadius: 3
+                            }}
+                          >
+                            {valor > 0 ? valor : ""}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 18, fontSize: 12, color: "var(--text-muted)" }}>
+                <span>Menor afluencia</span>
+                <div style={{ display: "flex", height: 10, width: 120, borderRadius: 4, overflow: "hidden" }}>
+                  {[0.1, 0.3, 0.5, 0.7, 0.9].map((op) => (
+                    <div key={op} style={{ flex: 1, background: `rgba(184, 147, 95, ${op})` }}></div>
+                  ))}
+                </div>
+                <span>Mayor afluencia</span>
+              </div>
+            </div>
+          </div>
+        </React.Fragment>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Shell principal (sidebar + contenido)
 // ---------------------------------------------------------------------------
 
@@ -1950,6 +2135,7 @@ const NAV_ITEMS = [
   { id: "visitas", label: "Visitas", icon: "◈", permiso: "registrar_visitas" },
   { id: "guias", label: "Guías", icon: "◈", permiso: "registrar_visitas" },
   { id: "ranking", label: "Ranking", icon: "◈", permiso: "ver_reportes" },
+  { id: "mapaCalor", label: "Mapa de calor", icon: "◈", permiso: "ver_reportes" },
   { id: "reportes", label: "Reportes", icon: "◈", permiso: "ver_reportes" },
   { id: "usuarios", label: "Usuarios y roles", icon: "◈", permiso: "gestionar_usuarios" },
   { id: "empresas", label: "Empresas", icon: "◇", permiso: "gestionar_catalogos" },
@@ -1988,6 +2174,9 @@ function Shell({ perfil }) {
     }
     if (vista === "ranking" && tienePermiso(perfil, "ver_reportes")) {
       return <RankingView perfil={perfil} />;
+    }
+    if (vista === "mapaCalor" && tienePermiso(perfil, "ver_reportes")) {
+      return <MapaCalorView />;
     }
     if (vista === "usuarios" && tienePermiso(perfil, "gestionar_usuarios")) {
       return <UsuariosView mostrarToast={mostrarToast} />;
