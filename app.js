@@ -273,9 +273,9 @@ function PanelInicio({ perfil }) {
         <div className="ticket-body">
           <h2 style={{ fontSize: 16, marginBottom: 6 }}>Versión estable</h2>
           <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 10 }}>
-            Ingreso de visitas, liberación de estacionamiento, cierre de día, reportes,
-            ranking de fidelidad, mapa de calor y logo configurable — todo el flujo
-            de la sala de guías funcionando de punta a punta.
+            Plataforma integral para la administración de guías: control de ingresos,
+            liberación de estacionamiento, cierre de jornada, reportería y análisis
+            de fidelización.
           </p>
           <span className="badge badge-success">✓ Sistema completo</span>
         </div>
