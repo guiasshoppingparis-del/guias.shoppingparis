@@ -268,16 +268,16 @@ function PanelInicio({ perfil }) {
       </div>
 
       <div className="ticket">
-        <div className="ticket-stub">v0.8</div>
+        <div className="ticket-stub">v1.0</div>
         <div className="ticket-perforation"></div>
         <div className="ticket-body">
-          <h2 style={{ fontSize: 16, marginBottom: 6 }}>Roadmap del sistema</h2>
+          <h2 style={{ fontSize: 16, marginBottom: 6 }}>Versión estable</h2>
           <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 10 }}>
-            Ya se puede subir el logo del shopping desde Configuración — aparece
-            en el menú y en el ticket de liberación en PDF. Esta es la última
-            pieza antes de la versión estable.
+            Ingreso de visitas, liberación de estacionamiento, cierre de día, reportes,
+            ranking de fidelidad, mapa de calor y logo configurable — todo el flujo
+            de la sala de guías funcionando de punta a punta.
           </p>
-          <span className="badge badge-gold">Próximo: v1.0 — Versión estable</span>
+          <span className="badge badge-success">✓ Sistema completo</span>
         </div>
       </div>
     </div>
@@ -678,6 +678,20 @@ function VisitasView({ perfil, mostrarToast }) {
 
   const puedeLiberar = tienePermiso(perfil, "liberar_estacionamiento");
 
+  async function anularVisita(v) {
+    const confirmar = window.confirm(
+      `¿Anular la visita de "${v.guiaNombre}" (ticket ${v.ticketEstacionamiento})?\n\nEsto se usa solo cuando la visita se cargó por error. No se puede deshacer.`
+    );
+    if (!confirmar) return;
+    try {
+      await db.collection("visitas").doc(v.id).delete();
+      mostrarToast("Visita anulada.");
+    } catch (err) {
+      console.error(err);
+      mostrarToast("No se pudo anular la visita.");
+    }
+  }
+
   return (
     <div>
       <div className="page-header">
@@ -751,15 +765,26 @@ function VisitasView({ perfil, mostrarToast }) {
                       </div>
                     </div>
 
-                    {puedeLiberar && (
-                      <button
-                        className="btn btn-gold"
-                        style={{ marginTop: 14, width: "100%" }}
-                        onClick={() => setVisitaSeleccionada(v)}
-                      >
-                        {alcanzado ? "Liberar estacionamiento" : "Registrar compra"}
-                      </button>
-                    )}
+                    <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+                      {puedeLiberar && (
+                        <button
+                          className="btn btn-gold"
+                          style={{ flex: 1 }}
+                          onClick={() => setVisitaSeleccionada(v)}
+                        >
+                          {alcanzado ? "Liberar estacionamiento" : "Registrar compra"}
+                        </button>
+                      )}
+                      {tienePermiso(perfil, "registrar_visitas") && (
+                        <button
+                          className="btn btn-danger"
+                          onClick={() => anularVisita(v)}
+                          title="Anular esta visita (se cargó por error)"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               );
@@ -2394,6 +2419,7 @@ function Shell({ perfil }) {
             </div>
           </div>
           <button className="link-muted" onClick={() => auth.signOut()}>Cerrar sesión</button>
+          <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.0</div>
         </div>
       </aside>
 

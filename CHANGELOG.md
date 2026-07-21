@@ -2,6 +2,15 @@
 
 Versionado simplificado `vMAJOR.MINOR`. MAJOR = cambios de arquitectura o que rompen datos existentes. MINOR = funcionalidad nueva incremental.
 
+## v1.0 — 2026-07-18
+
+Versión estable. Cierre del roadmap inicial (v0.1 a v0.8).
+
+- **Anular visita**: nuevo botón "✕" en cada tarjeta de "Visitas en curso" para dar de baja una visita cargada por error (guía, empresa o vehículo equivocado). Requiere el mismo permiso que registrar visitas.
+- Número de versión visible en el pie del menú lateral.
+- Revisión general de consistencia en las 8 versiones anteriores.
+- `README.md` ampliado con una guía de uso diario para el equipo (Admin y Encargado de Sala), además de la documentación técnica de instalación.
+
 ## v0.8 — 2026-07-18
 
 Logo configurable.
@@ -83,9 +92,3 @@ Estructura base del sistema.
 - Reglas de seguridad de Firestore basadas en permisos por rol.
 - Soporte offline (cache local de Firestore).
 - Identidad visual base (paleta, tipografía, componente "ticket").
-
-## Roadmap
-
-| Versión | Alcance |
-|---|---|
-| v1.0 | Primera versión estable end-to-end |
