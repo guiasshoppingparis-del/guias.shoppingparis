@@ -1030,69 +1030,95 @@ async function obtenerLogoParaPdf() {
 
 async function generarPdfLiberacion(visita, usuarioNombre) {
   const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ unit: "mm", format: [100, 150] });
-
-  const margen = 10;
-  let y = 16;
+  const ancho = 100;
+  const altoMitad = 150;
+  const doc = new jsPDF({ unit: "mm", format: [ancho, altoMitad * 2] });
 
   const logo = await obtenerLogoParaPdf();
 
-  if (logo) {
-    try {
-      doc.addImage(logo.dataUrl, logo.formato, margen, 8, 18, 18);
+  function dibujarCopia(yBase, etiqueta) {
+    const margen = 10;
+    let y = yBase + 16;
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.5);
+    doc.setTextColor(140);
+    doc.text(etiqueta, ancho - margen, yBase + 8, { align: "right" });
+    doc.setTextColor(0);
+
+    if (logo) {
+      try {
+        doc.addImage(logo.dataUrl, logo.formato, margen, yBase + 8, 16, 16);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(12);
+        doc.text("SHOPPING PARIS", margen + 20, yBase + 15);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8);
+        doc.text("Comprobante de liberación", margen + 20, yBase + 20);
+        y = yBase + 30;
+      } catch (err) {
+        console.warn("No se pudo incrustar el logo en el PDF:", err);
+      }
+    }
+
+    if (y === yBase + 16) {
       doc.setFont("helvetica", "bold");
       doc.setFontSize(13);
-      doc.text("SHOPPING PARIS", margen + 22, 15);
+      doc.text("SHOPPING PARIS", margen, y);
+      y += 6;
       doc.setFont("helvetica", "normal");
       doc.setFontSize(9);
-      doc.text("Comprobante de liberación", margen + 22, 21);
-      y = 32;
-    } catch (err) {
-      console.warn("No se pudo incrustar el logo en el PDF:", err);
+      doc.text("Comprobante de liberación de estacionamiento", margen, y);
+      y += 4;
     }
-  }
 
-  if (y === 16) {
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(14);
-    doc.text("SHOPPING PARIS", margen, y);
-    y += 6;
-    doc.setFontSize(10);
+    doc.setLineWidth(0.3);
+    doc.line(margen, y, ancho - margen, y);
+    y += 7;
+
+    function fila(etiquetaCampo, valor) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8.5);
+      doc.text(etiquetaCampo, margen, y);
+      doc.setFont("helvetica", "normal");
+      doc.text(String(valor), margen, y + 4.5);
+      y += 10.5;
+    }
+
+    fila("Guía", visita.guiaNombre);
+    fila("Empresa", visita.empresaNombre);
+    fila("Vehículo / Chapa", `${visita.vehiculoTipoNombre} — ${visita.chapa}`);
+    fila("N° Ticket de estacionamiento", visita.ticketEstacionamiento);
+    fila("Ingreso", formatearFechaHora(visita.fechaHoraIngreso));
+    fila("Salida", formatearFechaHora(new Date()));
+    fila("Tiempo de permanencia", tiempoTranscurrido(visita.fechaHoraIngreso));
+    fila("Monto acumulado en compras", `$ ${Number(visita.montoAcumulado || 0).toLocaleString("es-AR")}`);
+
+    doc.setLineWidth(0.3);
+    doc.line(margen, y, ancho - margen, y);
+    y += 7;
     doc.setFont("helvetica", "normal");
-    doc.text("Comprobante de liberación de estacionamiento", margen, y);
-    y += 4;
+    doc.setFontSize(7.5);
+    doc.text(`Liberado por: ${usuarioNombre}`, margen, y);
+    y += 4.5;
+    doc.text(`Emitido: ${new Date().toLocaleString("es-PY")}`, margen, y);
   }
 
+  dibujarCopia(0, "ORIGINAL");
+
+  // Línea de corte punteada en la mitad de la hoja.
+  doc.setDrawColor(160);
+  doc.setLineDashPattern([2, 2], 0);
   doc.setLineWidth(0.3);
-  doc.line(margen, y, 100 - margen, y);
-  y += 8;
+  doc.line(4, altoMitad, ancho - 4, altoMitad);
+  doc.setLineDashPattern([], 0);
+  doc.setDrawColor(0);
+  doc.setFontSize(7);
+  doc.setTextColor(160);
+  doc.text("✂ cortar acá", ancho / 2, altoMitad - 1.5, { align: "center" });
+  doc.setTextColor(0);
 
-  function fila(etiqueta, valor) {
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(9);
-    doc.text(etiqueta, margen, y);
-    doc.setFont("helvetica", "normal");
-    doc.text(String(valor), margen, y + 5);
-    y += 12;
-  }
-
-  fila("Guía", visita.guiaNombre);
-  fila("Empresa", visita.empresaNombre);
-  fila("Vehículo / Chapa", `${visita.vehiculoTipoNombre} — ${visita.chapa}`);
-  fila("N° Ticket de estacionamiento", visita.ticketEstacionamiento);
-  fila("Ingreso", formatearFechaHora(visita.fechaHoraIngreso));
-  fila("Salida", formatearFechaHora(new Date()));
-  fila("Tiempo de permanencia", tiempoTranscurrido(visita.fechaHoraIngreso));
-  fila("Monto acumulado en compras", `$ ${Number(visita.montoAcumulado || 0).toLocaleString("es-AR")}`);
-
-  doc.setLineWidth(0.3);
-  doc.line(margen, y, 100 - margen, y);
-  y += 8;
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(8);
-  doc.text(`Liberado por: ${usuarioNombre}`, margen, y);
-  y += 5;
-  doc.text(`Emitido: ${new Date().toLocaleString("es-PY")}`, margen, y);
+  dibujarCopia(altoMitad, "COPIA — PARA EL GUÍA");
 
   doc.save(`liberacion-ticket-${visita.ticketEstacionamiento}.pdf`);
 }
