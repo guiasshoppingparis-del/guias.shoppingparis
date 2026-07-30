@@ -708,6 +708,9 @@ function VisitasView({ perfil, mostrarToast }) {
               permisoSalidaFecha: firebase.firestore.FieldValue.delete()
             }
       );
+      if (otorgar) {
+        await generarPdfPermisoSalida(v, perfil.nombre);
+      }
       mostrarToast(otorgar ? "Permiso de salida otorgado." : "Permiso de salida retirado.");
     } catch (err) {
       console.error(err);
@@ -1062,6 +1065,72 @@ async function obtenerLogoParaPdf() {
     console.warn("No se pudo cargar el logo para el PDF:", err);
     return null;
   }
+}
+
+async function generarPdfPermisoSalida(visita, usuarioNombre) {
+  const { jsPDF } = window.jspdf;
+  const ancho = 100;
+  const doc = new jsPDF({ unit: "mm", format: [ancho, 95] });
+
+  const margen = 10;
+  let y = 16;
+
+  const logo = await obtenerLogoParaPdf();
+
+  if (logo) {
+    try {
+      doc.addImage(logo.dataUrl, logo.formato, margen, 8, 16, 16);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.text("SHOPPING PARIS", margen + 20, 14);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.text("Permiso de salida de estacionamiento", margen + 20, 19);
+      y = 30;
+    } catch (err) {
+      console.warn("No se pudo incrustar el logo en el PDF:", err);
+    }
+  }
+
+  if (y === 16) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(13);
+    doc.text("SHOPPING PARIS", margen, y);
+    y += 6;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.text("Permiso de salida de estacionamiento", margen, y);
+    y += 4;
+  }
+
+  doc.setLineWidth(0.3);
+  doc.line(margen, y, ancho - margen, y);
+  y += 8;
+
+  function fila(etiqueta, valor) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.text(etiqueta, margen, y);
+    doc.setFont("helvetica", "normal");
+    doc.text(String(valor), margen, y + 5);
+    y += 12;
+  }
+
+  fila("Guía", visita.guiaNombre);
+  fila("Empresa", visita.empresaNombre);
+  fila("Vehículo / Chapa", `${visita.vehiculoTipoNombre} — ${visita.chapa}`);
+  fila("N° Ticket de estacionamiento", visita.ticketEstacionamiento);
+
+  doc.setLineWidth(0.3);
+  doc.line(margen, y, ancho - margen, y);
+  y += 8;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+  doc.text(`Otorgado por: ${usuarioNombre}`, margen, y);
+  y += 5;
+  doc.text(`Emitido: ${new Date().toLocaleString("es-PY")}`, margen, y);
+
+  doc.save(`permiso-salida-${visita.ticketEstacionamiento}.pdf`);
 }
 
 async function generarPdfLiberacion(visita, usuarioNombre) {
