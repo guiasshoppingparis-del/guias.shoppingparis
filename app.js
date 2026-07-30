@@ -692,6 +692,29 @@ function VisitasView({ perfil, mostrarToast }) {
     }
   }
 
+  async function togglePermisoSalida(v) {
+    const otorgar = !v.permisoSalida;
+    try {
+      await db.collection("visitas").doc(v.id).update(
+        otorgar
+          ? {
+              permisoSalida: true,
+              permisoSalidaPor: perfil.nombre,
+              permisoSalidaFecha: firebase.firestore.FieldValue.serverTimestamp()
+            }
+          : {
+              permisoSalida: false,
+              permisoSalidaPor: firebase.firestore.FieldValue.delete(),
+              permisoSalidaFecha: firebase.firestore.FieldValue.delete()
+            }
+      );
+      mostrarToast(otorgar ? "Permiso de salida otorgado." : "Permiso de salida retirado.");
+    } catch (err) {
+      console.error(err);
+      mostrarToast("No se pudo actualizar el permiso de salida.");
+    }
+  }
+
   return (
     <div>
       <div className="page-header">
@@ -741,6 +764,9 @@ function VisitasView({ perfil, mostrarToast }) {
                   <div className="ticket-perforation"></div>
                   <div className="ticket-body">
                     <h3 style={{ fontSize: 16 }}>{v.guiaNombre}</h3>
+                    {v.permisoSalida && (
+                      <span className="badge badge-gold" style={{ marginBottom: 8 }}>🚗 Permiso de salida otorgado</span>
+                    )}
                     <div className="ticket-meta">
                       <span><strong>Empresa:</strong> {v.empresaNombre}</span>
                       <span><strong>Vehículo:</strong> {v.vehiculoTipoNombre} · {v.chapa}</span>
@@ -765,7 +791,17 @@ function VisitasView({ perfil, mostrarToast }) {
                       </div>
                     </div>
 
-                    <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+                    {tienePermiso(perfil, "registrar_visitas") && (
+                      <button
+                        className="btn btn-ghost"
+                        style={{ width: "100%", marginTop: 12 }}
+                        onClick={() => togglePermisoSalida(v)}
+                      >
+                        {v.permisoSalida ? "Quitar permiso de salida" : "Otorgar permiso de salida"}
+                      </button>
+                    )}
+
+                    <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                       {puedeLiberar && (
                         <button
                           className="btn btn-gold"
