@@ -2,6 +2,18 @@
 
 Versionado simplificado `vMAJOR.MINOR`. MAJOR = cambios de arquitectura o que rompen datos existentes. MINOR = funcionalidad nueva incremental.
 
+## v1.1 — 2026-08-24
+
+Impresión directa del comprobante de liberación (impresora térmica de red).
+
+- El botón "Liberar estacionamiento y emitir ticket" ya no descarga un PDF: imprime **directo por red** en la impresora térmica del punto de cobro (Epson TM-T20IV-L), vía un servidor local ("print-bridge") que corre en la PC de la impresora y habla ESC/POS por el puerto 9100. Ver carpeta `print-bridge/` y `SISTEMA-DE-IMPRESION.md`.
+- Se imprimen **2 copias separadas** (corte de papel entre una y otra): "COPIA: GUÍA" y "COPIA: SHOPPING", cada una con el mismo contenido que antes tenía el PDF (guía, empresa, vehículo/chapa, N° de ticket, ingreso, salida, permanencia, monto acumulado) más el logo del shopping.
+- Nuevo: **código de barras real** (CODE128) del N° de ticket, impreso por la propia impresora (no como imagen).
+- Si el servidor de impresión no responde (PC apagada, servidor no iniciado, etc.): el estacionamiento igual queda liberado en la base, se muestra un aviso claro, y el botón cambia a "Reintentar impresión" sin volver a tocar el registro.
+- Nuevo botón **"🖨️ Reimprimir último ticket"** en "Visitas en curso", disponible por unas horas después de cada liberación, por si hace falta reimprimir más tarde.
+- La generación de PDF (`generarPdfLiberacion`) queda en el código sin usarse en este flujo, por si se necesita como referencia o respaldo a futuro.
+- `PRINTER_IP` en `print-bridge/print-server.js` queda como placeholder (`"PENDIENTE"`) hasta configurar la IP real de la impresora.
+
 ## v1.0 — 2026-07-18
 
 Versión estable. Cierre del roadmap inicial (v0.1 a v0.8).
