@@ -677,6 +677,24 @@ function VisitasView({ perfil, mostrarToast }) {
   }, []);
 
   const puedeLiberar = tienePermiso(perfil, "liberar_estacionamiento");
+  const [ultimoTicket, setUltimoTicket] = useState(null);
+  const [reimprimiendo, setReimprimiendo] = useState(false);
+
+  useEffect(() => {
+    setUltimoTicket(obtenerUltimoTicketLiberado());
+  }, []);
+
+  async function reimprimirUltimoTicket() {
+    if (!ultimoTicket) return;
+    setReimprimiendo(true);
+    const ok = await imprimirComprobanteLiberacion(ultimoTicket.visita, ultimoTicket.usuarioNombre);
+    setReimprimiendo(false);
+    mostrarToast(
+      ok
+        ? `Ticket reimpreso: ${ultimoTicket.visita.guiaNombre}`
+        : "No se pudo reimprimir. Revisá que el servidor de impresión esté encendido."
+    );
+  }
 
   async function anularVisita(v) {
     const confirmar = window.confirm(
@@ -741,6 +759,16 @@ function VisitasView({ perfil, mostrarToast }) {
           <h2 style={{ fontSize: 18 }}>Visitas en curso</h2>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <span className="badge badge-gold">{visitasEnCurso.length}</span>
+            {puedeLiberar && ultimoTicket && (
+              <button
+                className="btn btn-ghost"
+                onClick={reimprimirUltimoTicket}
+                disabled={reimprimiendo}
+                title={`Último ticket liberado: ${ultimoTicket.visita.guiaNombre}`}
+              >
+                {reimprimiendo ? "Imprimiendo..." : "🖨️ Reimprimir último ticket"}
+              </button>
+            )}
             {tienePermiso(perfil, "registrar_visitas") && visitasEnCurso.length > 0 && (
               <button className="btn btn-ghost" onClick={() => setMostrarCierreDia(true)}>Cerrar día</button>
             )}
@@ -836,7 +864,10 @@ function VisitasView({ perfil, mostrarToast }) {
         <ModalLiberarVisita
           visita={visitaSeleccionada}
           perfil={perfil}
-          onClose={() => setVisitaSeleccionada(null)}
+          onClose={() => {
+            setVisitaSeleccionada(null);
+            setUltimoTicket(obtenerUltimoTicketLiberado());
+          }}
           mostrarToast={mostrarToast}
         />
       )}
@@ -1228,6 +1259,112 @@ async function generarPdfLiberacion(visita, usuarioNombre) {
   doc.save(`liberacion-ticket-${visita.ticketEstacionamiento}.pdf`);
 }
 
+// ---------------------------------------------------------------------------
+// Impresión directa del comprobante de liberación (impresora térmica de red)
+// ---------------------------------------------------------------------------
+// En vez de descargar un PDF, el ticket sale directo por la impresora térmica
+// (Epson TM-T20IV-L) conectada en red, a través de un pequeño servidor local
+// ("print-bridge") que corre en la PC del punto de cobro y escucha en
+// http://localhost:5555. Ver la carpeta print-bridge/ para el detalle.
+
+const PRINT_BRIDGE_URL = "http://localhost:5555/imprimir";
+const LLAVE_ULTIMO_TICKET = "spx_ultimoTicketLiberado";
+
+// Manda un pedido de impresión al servidor local. Devuelve true/false en vez
+// de tirar error, para que la app pueda mostrar un aviso simple ("no se pudo
+// imprimir, revisá el servidor") sin romper el flujo de la liberación.
+async function imprimirDirecto({ lines, logo, cortar = true }) {
+  try {
+    const res = await fetch(PRINT_BRIDGE_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lines, logo: logo || null, cortar }),
+      signal: AbortSignal.timeout(8000)
+    });
+    const data = await res.json();
+    return !!data.ok;
+  } catch (err) {
+    console.warn("No se pudo imprimir directo:", err);
+    return false;
+  }
+}
+
+// Una "fila" del comprobante: etiqueta en negrita arriba, valor debajo.
+function filaComprobante(etiqueta, valor) {
+  return [
+    { text: etiqueta, bold: true, align: "left" },
+    { text: String(valor), align: "left" }
+  ];
+}
+
+function construirLineasComprobante(visita, usuarioNombre, rotulo) {
+  const L = [];
+  if (rotulo) L.push({ text: rotulo, bold: true, align: "center" });
+  L.push({ text: "SHOPPING PARIS", bold: true, big: true, align: "center" });
+  L.push({ text: "Comprobante de liberacion de estacionamiento", align: "center" });
+  L.push({ text: "--------------------------------", align: "center" });
+  L.push(...filaComprobante("Guia", visita.guiaNombre));
+  L.push(...filaComprobante("Empresa", visita.empresaNombre));
+  L.push(...filaComprobante("Vehiculo / Chapa", `${visita.vehiculoTipoNombre} - ${visita.chapa}`));
+  L.push(...filaComprobante("N Ticket de estacionamiento", visita.ticketEstacionamiento));
+  L.push({ barcode: String(visita.ticketEstacionamiento), align: "center" });
+  L.push(...filaComprobante("Ingreso", formatearFechaHora(visita.fechaHoraIngreso)));
+  L.push(...filaComprobante("Salida", formatearFechaHora(visita.fechaHoraSalida || new Date())));
+  L.push(...filaComprobante("Tiempo de permanencia", tiempoTranscurrido(visita.fechaHoraIngreso)));
+  L.push(...filaComprobante("Monto acumulado en compras", `$ ${Number(visita.montoAcumulado || 0).toLocaleString("es-AR")}`));
+  L.push({ text: "--------------------------------", align: "center" });
+  L.push({ text: `Liberado por: ${usuarioNombre}` });
+  L.push({ text: `Emitido: ${new Date().toLocaleString("es-PY")}` });
+  return L;
+}
+
+// Reutiliza el mismo logo que ya usa el PDF (config/branding en Firestore + Storage).
+async function obtenerLogoBase64ParaTicket() {
+  const logo = await obtenerLogoParaPdf();
+  return logo ? logo.dataUrl : null;
+}
+
+// Imprime las 2 copias del comprobante (una para el guía, una para el shopping),
+// cada una como un ticket separado (corta papel entre una y otra).
+async function imprimirComprobanteLiberacion(visita, usuarioNombre) {
+  const logo = await obtenerLogoBase64ParaTicket();
+  const okGuia = await imprimirDirecto({
+    lines: construirLineasComprobante(visita, usuarioNombre, "COPIA: GUÍA"),
+    logo,
+    cortar: true
+  });
+  if (!okGuia) return false;
+  const okShopping = await imprimirDirecto({
+    lines: construirLineasComprobante(visita, usuarioNombre, "COPIA: SHOPPING"),
+    logo,
+    cortar: true
+  });
+  return okShopping;
+}
+
+// Guarda el último ticket liberado en el navegador para poder reimprimirlo más
+// tarde (por ejemplo si la impresora estaba apagada en el momento). Se guarda
+// por unas horas nomás, para no arriesgarse a reimprimir un ticket viejo por error.
+function guardarUltimoTicketLiberado(visita, usuarioNombre) {
+  try {
+    localStorage.setItem(LLAVE_ULTIMO_TICKET, JSON.stringify({ visita, usuarioNombre, guardadoEn: Date.now() }));
+  } catch (err) {
+    console.warn("No se pudo guardar el último ticket liberado:", err);
+  }
+}
+
+function obtenerUltimoTicketLiberado() {
+  try {
+    const raw = localStorage.getItem(LLAVE_ULTIMO_TICKET);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (Date.now() - data.guardadoEn > 1000 * 60 * 60 * 4) return null; // vence a las 4hs
+    return data;
+  } catch (err) {
+    return null;
+  }
+}
+
 function ModalLiberarVisita({ visita, perfil, onClose, mostrarToast }) {
   const [montoNuevo, setMontoNuevo] = useState("");
   const [cargando, setCargando] = useState(false);
@@ -1262,6 +1399,10 @@ function ModalLiberarVisita({ visita, perfil, onClose, mostrarToast }) {
     }
   }
 
+  // Cuando la impresión falla pero el estacionamiento ya quedó liberado en la
+  // base, no hay que reintentar el paso de Firestore — solo la impresión.
+  const [yaLiberado, setYaLiberado] = useState(false);
+
   async function liberar() {
     setCargando(true);
     setError("");
@@ -1272,12 +1413,30 @@ function ModalLiberarVisita({ visita, perfil, onClose, mostrarToast }) {
         usuarioSalidaId: perfil.id,
         usuarioSalidaNombre: perfil.nombre
       });
-      await generarPdfLiberacion(visita, perfil.nombre);
-      mostrarToast(`Estacionamiento liberado: ${visita.guiaNombre}`);
-      onClose();
+      setYaLiberado(true);
     } catch (err) {
       console.error(err);
       setError("No se pudo liberar el estacionamiento. Probá de nuevo.");
+      setCargando(false);
+      return;
+    }
+    await intentarImprimir();
+  }
+
+  async function intentarImprimir() {
+    setCargando(true);
+    setError("");
+    const ok = await imprimirComprobanteLiberacion(visita, perfil.nombre);
+    if (ok) {
+      guardarUltimoTicketLiberado(visita, perfil.nombre);
+      mostrarToast(`Estacionamiento liberado: ${visita.guiaNombre}`);
+      setCargando(false);
+      onClose();
+    } else {
+      setError(
+        "El estacionamiento se liberó, pero no se pudo imprimir el ticket. " +
+        "Verificá que la PC de la impresora esté prendida y el servidor de impresión abierto, y volvé a intentar."
+      );
       setCargando(false);
     }
   }
@@ -1335,8 +1494,16 @@ function ModalLiberarVisita({ visita, perfil, onClose, mostrarToast }) {
         <button className="btn btn-ghost" disabled={cargando}>Agregar</button>
       </form>
 
-      <button className="btn btn-primary" disabled={!alcanzado || cargando} onClick={liberar}>
-        {cargando ? "Procesando..." : "Liberar estacionamiento y emitir ticket"}
+      <button
+        className="btn btn-primary"
+        disabled={(!alcanzado && !yaLiberado) || cargando}
+        onClick={yaLiberado ? intentarImprimir : liberar}
+      >
+        {cargando
+          ? "Procesando..."
+          : yaLiberado
+          ? "Reintentar impresión"
+          : "Liberar estacionamiento y emitir ticket"}
       </button>
     </Modal>
   );
