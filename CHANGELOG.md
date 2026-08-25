@@ -2,6 +2,15 @@
 
 Versionado simplificado `vMAJOR.MINOR`. MAJOR = cambios de arquitectura o que rompen datos existentes. MINOR = funcionalidad nueva incremental.
 
+## v1.9 — 2026-08-25
+
+Totales al pie de los reportes detallados.
+
+- Los 4 reportes desplegables de "Actividad por período" (v1.6) ahora muestran una fila de **totales** al final, tanto en pantalla como al pie del PDF descargado:
+  - **Vehículos ingresados / Liberados**: Total de Guías, Total de Empresas, Total de Vehículos, Total de Tickets, Total de Monto acumulado (todos contando valores únicos donde corresponde — por ejemplo, una empresa que aparece en varias filas cuenta una sola vez).
+  - **No liberados**: los mismos totales, más el Total acumulado y el Total faltante (suma de lo que le faltó a cada uno para llegar al mínimo).
+  - **Personas ingresadas por guía**: Total de Guías, Total de Empresas, Total de Visitas y Total de Pasajeros.
+
 ## v1.8 — 2026-08-25
 
 Menú lateral replegable + columna Empresa en el Ranking.

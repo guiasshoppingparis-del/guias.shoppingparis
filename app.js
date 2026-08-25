@@ -268,7 +268,7 @@ function PanelInicio({ perfil }) {
       </div>
 
       <div className="ticket">
-        <div className="ticket-stub">v1.8</div>
+        <div className="ticket-stub">v1.9</div>
         <div className="ticket-perforation"></div>
         <div className="ticket-body">
           <h2 style={{ fontSize: 16, marginBottom: 6 }}>Versión estable</h2>
@@ -2219,6 +2219,11 @@ function fechaISO(date) {
 
 const ESTADO_VISITA_LABEL = { en_curso: "En curso", liberado: "Liberado", no_liberado: "No liberado" };
 
+// Cuenta valores distintos (no vacíos) de un campo dentro de un array de objetos.
+function contarUnicos(datos, campo) {
+  return new Set(datos.map((d) => d[campo]).filter((v) => v !== undefined && v !== null && v !== "")).size;
+}
+
 // Agrupa las visitas por guía para el reporte de "personas ingresadas por guía".
 function agruparPersonasPorGuia(visitas) {
   const mapa = new Map();
@@ -2235,12 +2240,19 @@ function agruparPersonasPorGuia(visitas) {
 }
 
 // Configuración de los 4 reportes desplegables desde las tarjetas de "Actividad por período".
+// "totales" arma la fila de resumen que se muestra en pantalla y al pie del PDF.
 const REPORTES_DETALLE_CONFIG = {
   personas: {
     titulo: "Personas ingresadas por guía",
     columnas: ["Guía", "Empresa", "Visitas", "Pasajeros"],
     datos: (visitas) => agruparPersonasPorGuia(visitas),
-    filas: (datos) => datos.map((r) => [r.guia, r.empresa, r.visitas, r.pasajeros])
+    filas: (datos) => datos.map((r) => [r.guia, r.empresa, r.visitas, r.pasajeros]),
+    totales: (datos) => [
+      { label: "Total de Guías", valor: datos.length },
+      { label: "Total de Empresas", valor: contarUnicos(datos, "empresa") },
+      { label: "Total de Visitas", valor: datos.reduce((acc, r) => acc + r.visitas, 0) },
+      { label: "Total de Pasajeros", valor: datos.reduce((acc, r) => acc + r.pasajeros, 0) }
+    ]
   },
   vehiculos: {
     titulo: "Vehículos ingresados",
@@ -2255,7 +2267,14 @@ const REPORTES_DETALLE_CONFIG = {
       v.cantPasajeros,
       v.ticketEstacionamiento,
       ESTADO_VISITA_LABEL[v.estado] || v.estado
-    ])
+    ]),
+    totales: (datos) => [
+      { label: "Total de Guías", valor: contarUnicos(datos, "guiaNombre") },
+      { label: "Total de Empresas", valor: contarUnicos(datos, "empresaNombre") },
+      { label: "Total de Vehículos", valor: datos.length },
+      { label: "Total de Tickets", valor: contarUnicos(datos, "ticketEstacionamiento") },
+      { label: "Total de Monto acumulado", valor: `$ ${datos.reduce((acc, v) => acc + (Number(v.montoAcumulado) || 0), 0).toLocaleString("es-AR")}` }
+    ]
   },
   liberados: {
     titulo: "Vehículos liberados",
@@ -2269,7 +2288,14 @@ const REPORTES_DETALLE_CONFIG = {
       `${v.vehiculoTipoNombre} - ${v.chapa}`,
       v.ticketEstacionamiento,
       `$ ${Number(v.montoAcumulado || 0).toLocaleString("es-AR")}`
-    ])
+    ]),
+    totales: (datos) => [
+      { label: "Total de Guías", valor: contarUnicos(datos, "guiaNombre") },
+      { label: "Total de Empresas", valor: contarUnicos(datos, "empresaNombre") },
+      { label: "Total de Vehículos", valor: datos.length },
+      { label: "Total de Tickets", valor: contarUnicos(datos, "ticketEstacionamiento") },
+      { label: "Total de Monto acumulado", valor: `$ ${datos.reduce((acc, v) => acc + (Number(v.montoAcumulado) || 0), 0).toLocaleString("es-AR")}` }
+    ]
   },
   no_liberados: {
     titulo: "Vehículos no liberados",
@@ -2283,7 +2309,15 @@ const REPORTES_DETALLE_CONFIG = {
       v.cantPasajeros,
       `$ ${Number(v.montoAcumulado || 0).toLocaleString("es-AR")} / $ ${Number(v.montoMinimoRequerido || 0).toLocaleString("es-AR")}`,
       `$ ${Math.max(0, (v.montoMinimoRequerido || 0) - (v.montoAcumulado || 0)).toLocaleString("es-AR")}`
-    ])
+    ]),
+    totales: (datos) => [
+      { label: "Total de Guías", valor: contarUnicos(datos, "guiaNombre") },
+      { label: "Total de Empresas", valor: contarUnicos(datos, "empresaNombre") },
+      { label: "Total de Vehículos", valor: datos.length },
+      { label: "Total de Tickets", valor: contarUnicos(datos, "ticketEstacionamiento") },
+      { label: "Total acumulado", valor: `$ ${datos.reduce((acc, v) => acc + (Number(v.montoAcumulado) || 0), 0).toLocaleString("es-AR")}` },
+      { label: "Total faltante", valor: `$ ${datos.reduce((acc, v) => acc + Math.max(0, (v.montoMinimoRequerido || 0) - (v.montoAcumulado || 0)), 0).toLocaleString("es-AR")}` }
+    ]
   }
 };
 
@@ -2291,6 +2325,7 @@ function ModalReporteDetalle({ tipo, visitas, desde, hasta, onClose }) {
   const config = REPORTES_DETALLE_CONFIG[tipo];
   const datos = config.datos(visitas);
   const filas = config.filas(datos);
+  const totales = config.totales ? config.totales(datos) : [];
 
   function descargarPDF() {
     const { jsPDF } = window.jspdf;
@@ -2311,6 +2346,26 @@ function ModalReporteDetalle({ tipo, visitas, desde, hasta, onClose }) {
       headStyles: { fillColor: [31, 78, 120], textColor: 255 },
       alternateRowStyles: { fillColor: [245, 243, 237] }
     });
+
+    if (totales.length > 0) {
+      let y = doc.lastAutoTable.finalY + 10;
+      const alturaPagina = doc.internal.pageSize.getHeight();
+      if (y > alturaPagina - 20) {
+        doc.addPage();
+        y = 20;
+      }
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.text("Totales", 14, y);
+      y += 6;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      for (const t of totales) {
+        doc.text(`${t.label}: ${t.valor}`, 14, y);
+        y += 6;
+      }
+    }
+
     doc.save(`reporte-${tipo}-${desde}-a-${hasta}.pdf`);
   }
 
@@ -2319,7 +2374,7 @@ function ModalReporteDetalle({ tipo, visitas, desde, hasta, onClose }) {
       <p style={{ fontSize: 13, color: "var(--text-muted)", marginTop: -4, marginBottom: 14 }}>
         Período: {desde} a {hasta} — {filas.length} {filas.length === 1 ? "registro" : "registros"}
       </p>
-      <div style={{ maxHeight: "55vh", overflow: "auto", marginBottom: 18, border: "1px solid var(--line)", borderRadius: 8 }}>
+      <div style={{ maxHeight: "55vh", overflow: "auto", marginBottom: 14, border: "1px solid var(--line)", borderRadius: 8 }}>
         <table className="data-table" style={{ minWidth: "max-content" }}>
           <thead>
             <tr>
@@ -2343,6 +2398,30 @@ function ModalReporteDetalle({ tipo, visitas, desde, hasta, onClose }) {
           </tbody>
         </table>
       </div>
+
+      {totales.length > 0 && (
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 10,
+            marginBottom: 18,
+            padding: "12px 14px",
+            background: "var(--paper)",
+            borderRadius: 8
+          }}
+        >
+          {totales.map((t) => (
+            <div key={t.label} style={{ minWidth: 140 }}>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.03em" }}>
+                {t.label}
+              </div>
+              <div style={{ fontSize: 18, fontWeight: 700 }}>{t.valor}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
       <button className="btn btn-primary" style={{ width: "100%" }} onClick={descargarPDF} disabled={filas.length === 0}>
         Descargar PDF
       </button>
@@ -3230,7 +3309,7 @@ function Shell({ perfil }) {
             {sidebarColapsado ? "⏻" : "Cerrar sesión"}
           </button>
           {!sidebarColapsado && (
-            <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.8</div>
+            <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.9</div>
           )}
         </div>
       </aside>
