@@ -645,6 +645,7 @@ function VisitasView({ perfil, mostrarToast }) {
   const [tiposVehiculo, setTiposVehiculo] = useState([]);
   const [visitasEnCurso, setVisitasEnCurso] = useState([]);
   const [visitaSeleccionada, setVisitaSeleccionada] = useState(null);
+  const [visitaParaPermiso, setVisitaParaPermiso] = useState(null);
   const [mostrarCierreDia, setMostrarCierreDia] = useState(false);
   const [tick, setTick] = useState(0);
 
@@ -724,26 +725,18 @@ function VisitasView({ perfil, mostrarToast }) {
     }
   }
 
-  async function togglePermisoSalida(v) {
-    const otorgar = !v.permisoSalida;
+  // Otorgar el permiso ahora pasa por un modal (motivo + autorizante) antes de
+  // tocar Firestore y generar el PDF; acá solo queda la revocación directa.
+  async function revocarPermisoSalida(v) {
     try {
-      await db.collection("visitas").doc(v.id).update(
-        otorgar
-          ? {
-              permisoSalida: true,
-              permisoSalidaPor: perfil.nombre,
-              permisoSalidaFecha: firebase.firestore.FieldValue.serverTimestamp()
-            }
-          : {
-              permisoSalida: false,
-              permisoSalidaPor: firebase.firestore.FieldValue.delete(),
-              permisoSalidaFecha: firebase.firestore.FieldValue.delete()
-            }
-      );
-      if (otorgar) {
-        await generarPdfPermisoSalida(v, perfil.nombre);
-      }
-      mostrarToast(otorgar ? "Permiso de salida otorgado." : "Permiso de salida retirado.");
+      await db.collection("visitas").doc(v.id).update({
+        permisoSalida: false,
+        permisoSalidaPor: firebase.firestore.FieldValue.delete(),
+        permisoSalidaFecha: firebase.firestore.FieldValue.delete(),
+        motivosSalida: firebase.firestore.FieldValue.delete(),
+        autorizadoPorLocal: firebase.firestore.FieldValue.delete()
+      });
+      mostrarToast("Permiso de salida retirado.");
     } catch (err) {
       console.error(err);
       mostrarToast("No se pudo actualizar el permiso de salida.");
@@ -840,7 +833,7 @@ function VisitasView({ perfil, mostrarToast }) {
                       <button
                         className="btn btn-ghost"
                         style={{ width: "100%", marginTop: 12 }}
-                        onClick={() => togglePermisoSalida(v)}
+                        onClick={() => (v.permisoSalida ? revocarPermisoSalida(v) : setVisitaParaPermiso(v))}
                       >
                         {v.permisoSalida ? "Quitar permiso de salida" : "Otorgar permiso de salida"}
                       </button>
@@ -882,6 +875,15 @@ function VisitasView({ perfil, mostrarToast }) {
             setVisitaSeleccionada(null);
             setUltimoTicket(obtenerUltimoTicketLiberado());
           }}
+          mostrarToast={mostrarToast}
+        />
+      )}
+
+      {visitaParaPermiso && (
+        <ModalPermisoSalida
+          visita={visitaParaPermiso}
+          perfil={perfil}
+          onClose={() => setVisitaParaPermiso(null)}
           mostrarToast={mostrarToast}
         />
       )}
@@ -1138,10 +1140,11 @@ async function obtenerLogoParaPdf() {
   }
 }
 
-async function generarPdfPermisoSalida(visita, usuarioNombre) {
+async function generarPdfPermisoSalida(visita, usuarioNombre, motivos, autorizadoPorLocal) {
   const { jsPDF } = window.jspdf;
   const ancho = 100;
-  const doc = new jsPDF({ unit: "mm", format: [ancho, 95] });
+  const alto = 150; // más alto que antes: entran los motivos, autorizante y las 2 firmas
+  const doc = new jsPDF({ unit: "mm", format: [ancho, alto] });
 
   const margen = 10;
   let y = 16;
@@ -1183,14 +1186,17 @@ async function generarPdfPermisoSalida(visita, usuarioNombre) {
     doc.setFontSize(9);
     doc.text(etiqueta, margen, y);
     doc.setFont("helvetica", "normal");
-    doc.text(String(valor), margen, y + 5);
-    y += 12;
+    const lineas = doc.splitTextToSize(String(valor), ancho - margen * 2);
+    doc.text(lineas, margen, y + 5);
+    y += 6 + (lineas.length - 1) * 4.5 + 6;
   }
 
   fila("Guía", visita.guiaNombre);
   fila("Empresa", visita.empresaNombre);
   fila("Vehículo / Chapa", `${visita.vehiculoTipoNombre} — ${visita.chapa}`);
   fila("N° Ticket de estacionamiento", visita.ticketEstacionamiento);
+  fila("Motivo de la salida", (motivos || []).join(" / ") || "—");
+  fila("Autorizado por local", autorizadoPorLocal || "—");
 
   doc.setLineWidth(0.3);
   doc.line(margen, y, ancho - margen, y);
@@ -1201,7 +1207,138 @@ async function generarPdfPermisoSalida(visita, usuarioNombre) {
   y += 5;
   doc.text(`Emitido: ${new Date().toLocaleString("es-PY")}`, margen, y);
 
+  // Espacios de firma: guía y autorizante del local.
+  y += 16;
+  doc.setLineWidth(0.2);
+  doc.line(margen, y, ancho - margen, y);
+  y += 4;
+  doc.setFontSize(8);
+  doc.text("Firma del guía", margen, y);
+
+  y += 20;
+  doc.line(margen, y, ancho - margen, y);
+  y += 4;
+  doc.text("Firma autorizante del local", margen, y);
+
   doc.save(`permiso-salida-${visita.ticketEstacionamiento}.pdf`);
+}
+
+const MOTIVOS_SALIDA_FIJOS = [
+  "Buscar pasajero",
+  "Entregar mercaderías/pedidos",
+  "Asuntos administrativos",
+  "Taller mecánico/mantenimiento"
+];
+
+function ModalPermisoSalida({ visita, perfil, onClose, mostrarToast }) {
+  const [seleccionados, setSeleccionados] = useState({});
+  const [otroMotivoActivo, setOtroMotivoActivo] = useState(false);
+  const [otroMotivoTexto, setOtroMotivoTexto] = useState("");
+  const [autorizadoPorLocal, setAutorizadoPorLocal] = useState("");
+  const [error, setError] = useState("");
+  const [cargando, setCargando] = useState(false);
+
+  function toggleMotivo(m) {
+    setSeleccionados((prev) => ({ ...prev, [m]: !prev[m] }));
+  }
+
+  async function confirmar() {
+    setError("");
+
+    const motivosFinal = MOTIVOS_SALIDA_FIJOS.filter((m) => seleccionados[m]);
+    if (otroMotivoActivo) {
+      if (!otroMotivoTexto.trim()) {
+        setError('Completá el detalle de "Otro motivo".');
+        return;
+      }
+      motivosFinal.push(`Otro motivo: ${otroMotivoTexto.trim()}`);
+    }
+    if (motivosFinal.length === 0) {
+      setError("Marcá al menos un motivo de salida.");
+      return;
+    }
+    if (!autorizadoPorLocal.trim()) {
+      setError('El campo "Autorizado por local" es obligatorio.');
+      return;
+    }
+
+    setCargando(true);
+    try {
+      await db.collection("visitas").doc(visita.id).update({
+        permisoSalida: true,
+        permisoSalidaPor: perfil.nombre,
+        permisoSalidaFecha: firebase.firestore.FieldValue.serverTimestamp(),
+        motivosSalida: motivosFinal,
+        autorizadoPorLocal: autorizadoPorLocal.trim()
+      });
+      await generarPdfPermisoSalida(visita, perfil.nombre, motivosFinal, autorizadoPorLocal.trim());
+      mostrarToast("Permiso de salida otorgado.");
+      onClose();
+    } catch (err) {
+      console.error(err);
+      setError("No se pudo otorgar el permiso de salida. Probá de nuevo.");
+      setCargando(false);
+    }
+  }
+
+  return (
+    <Modal titulo={`Permiso de salida — ${visita.guiaNombre}`} onClose={onClose}>
+      {error && <div className="form-error">{error}</div>}
+
+      <div className="field">
+        <label>Motivo de la salida</label>
+        <div className="checkbox-list">
+          {MOTIVOS_SALIDA_FIJOS.map((m) => (
+            <div className="checkbox-row" key={m}>
+              <input
+                type="checkbox"
+                id={`motivo-${m}`}
+                checked={!!seleccionados[m]}
+                onChange={() => toggleMotivo(m)}
+              />
+              <label htmlFor={`motivo-${m}`}>{m}</label>
+            </div>
+          ))}
+          <div className="checkbox-row">
+            <input
+              type="checkbox"
+              id="motivo-otro"
+              checked={otroMotivoActivo}
+              onChange={() => setOtroMotivoActivo((v) => !v)}
+            />
+            <label htmlFor="motivo-otro">Otro motivo:</label>
+          </div>
+          {otroMotivoActivo && (
+            <input
+              value={otroMotivoTexto}
+              onChange={(e) => setOtroMotivoTexto(e.target.value)}
+              placeholder="Detalle del motivo"
+              style={{ marginTop: 4, marginLeft: 26 }}
+            />
+          )}
+        </div>
+      </div>
+
+      <div className="field" style={{ marginTop: 14 }}>
+        <label>Autorizado por local *</label>
+        <input
+          value={autorizadoPorLocal}
+          onChange={(e) => setAutorizadoPorLocal(e.target.value)}
+          placeholder="Nombre de quien autoriza desde el local"
+          required
+        />
+      </div>
+
+      <button
+        className="btn btn-primary"
+        style={{ width: "100%", marginTop: 16 }}
+        disabled={cargando}
+        onClick={confirmar}
+      >
+        {cargando ? "Generando..." : "Otorgar permiso y emitir PDF"}
+      </button>
+    </Modal>
+  );
 }
 
 async function generarPdfLiberacion(visita, usuarioNombre) {
