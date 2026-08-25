@@ -268,7 +268,7 @@ function PanelInicio({ perfil }) {
       </div>
 
       <div className="ticket">
-        <div className="ticket-stub">v1.1</div>
+        <div className="ticket-stub">v1.2</div>
         <div className="ticket-perforation"></div>
         <div className="ticket-body">
           <h2 style={{ fontSize: 16, marginBottom: 6 }}>Versión estable</h2>
@@ -1232,11 +1232,15 @@ const MOTIVOS_SALIDA_FIJOS = [
 
 function ModalPermisoSalida({ visita, perfil, onClose, mostrarToast }) {
   const [seleccionados, setSeleccionados] = useState({});
-  const [otroMotivoActivo, setOtroMotivoActivo] = useState(false);
   const [otroMotivoTexto, setOtroMotivoTexto] = useState("");
   const [autorizadoPorLocal, setAutorizadoPorLocal] = useState("");
   const [error, setError] = useState("");
   const [cargando, setCargando] = useState(false);
+  // Igual que en la liberación: si ya se guardó en Firestore pero falló la
+  // impresión, no hay que repetir el guardado — solo reintentar imprimir.
+  const [yaOtorgado, setYaOtorgado] = useState(false);
+  const [motivosGuardados, setMotivosGuardados] = useState(null);
+  const [autorizanteGuardado, setAutorizanteGuardado] = useState("");
 
   function toggleMotivo(m) {
     setSeleccionados((prev) => ({ ...prev, [m]: !prev[m] }));
@@ -1246,15 +1250,11 @@ function ModalPermisoSalida({ visita, perfil, onClose, mostrarToast }) {
     setError("");
 
     const motivosFinal = MOTIVOS_SALIDA_FIJOS.filter((m) => seleccionados[m]);
-    if (otroMotivoActivo) {
-      if (!otroMotivoTexto.trim()) {
-        setError('Completá el detalle de "Otro motivo".');
-        return;
-      }
+    if (otroMotivoTexto.trim()) {
       motivosFinal.push(`Otro motivo: ${otroMotivoTexto.trim()}`);
     }
     if (motivosFinal.length === 0) {
-      setError("Marcá al menos un motivo de salida.");
+      setError("Marcá al menos un motivo de salida, o completá el campo \"Otro motivo\".");
       return;
     }
     if (!autorizadoPorLocal.trim()) {
@@ -1271,12 +1271,36 @@ function ModalPermisoSalida({ visita, perfil, onClose, mostrarToast }) {
         motivosSalida: motivosFinal,
         autorizadoPorLocal: autorizadoPorLocal.trim()
       });
-      await generarPdfPermisoSalida(visita, perfil.nombre, motivosFinal, autorizadoPorLocal.trim());
-      mostrarToast("Permiso de salida otorgado.");
-      onClose();
+      setMotivosGuardados(motivosFinal);
+      setAutorizanteGuardado(autorizadoPorLocal.trim());
+      setYaOtorgado(true);
     } catch (err) {
       console.error(err);
       setError("No se pudo otorgar el permiso de salida. Probá de nuevo.");
+      setCargando(false);
+      return;
+    }
+    await intentarImprimir(motivosFinal, autorizadoPorLocal.trim());
+  }
+
+  async function intentarImprimir(motivos, autorizante) {
+    setCargando(true);
+    setError("");
+    const ok = await imprimirPermisoSalida(
+      visita,
+      perfil.nombre,
+      motivos || motivosGuardados,
+      autorizante || autorizanteGuardado
+    );
+    if (ok) {
+      mostrarToast("Permiso de salida otorgado.");
+      setCargando(false);
+      onClose();
+    } else {
+      setError(
+        "El permiso se otorgó, pero no se pudo imprimir el ticket. " +
+        "Verificá que la PC de la impresora esté prendida y el servidor de impresión abierto, y volvé a intentar."
+      );
       setCargando(false);
     }
   }
@@ -1295,28 +1319,19 @@ function ModalPermisoSalida({ visita, perfil, onClose, mostrarToast }) {
                 id={`motivo-${m}`}
                 checked={!!seleccionados[m]}
                 onChange={() => toggleMotivo(m)}
+                disabled={yaOtorgado}
               />
               <label htmlFor={`motivo-${m}`}>{m}</label>
             </div>
           ))}
-          <div className="checkbox-row">
-            <input
-              type="checkbox"
-              id="motivo-otro"
-              checked={otroMotivoActivo}
-              onChange={() => setOtroMotivoActivo((v) => !v)}
-            />
-            <label htmlFor="motivo-otro">Otro motivo:</label>
-          </div>
-          {otroMotivoActivo && (
-            <input
-              value={otroMotivoTexto}
-              onChange={(e) => setOtroMotivoTexto(e.target.value)}
-              placeholder="Detalle del motivo"
-              style={{ marginTop: 4, marginLeft: 26 }}
-            />
-          )}
         </div>
+        <label style={{ marginTop: 10, display: "block" }}>Otro motivo</label>
+        <input
+          value={otroMotivoTexto}
+          onChange={(e) => setOtroMotivoTexto(e.target.value)}
+          placeholder="Detalle del motivo (opcional)"
+          disabled={yaOtorgado}
+        />
       </div>
 
       <div className="field" style={{ marginTop: 14 }}>
@@ -1326,6 +1341,7 @@ function ModalPermisoSalida({ visita, perfil, onClose, mostrarToast }) {
           onChange={(e) => setAutorizadoPorLocal(e.target.value)}
           placeholder="Nombre de quien autoriza desde el local"
           required
+          disabled={yaOtorgado}
         />
       </div>
 
@@ -1333,9 +1349,9 @@ function ModalPermisoSalida({ visita, perfil, onClose, mostrarToast }) {
         className="btn btn-primary"
         style={{ width: "100%", marginTop: 16 }}
         disabled={cargando}
-        onClick={confirmar}
+        onClick={yaOtorgado ? () => intentarImprimir() : confirmar}
       >
-        {cargando ? "Generando..." : "Otorgar permiso y emitir PDF"}
+        {cargando ? "Procesando..." : yaOtorgado ? "Reintentar impresión" : "Otorgar permiso e imprimir"}
       </button>
     </Modal>
   );
@@ -1517,6 +1533,56 @@ async function imprimirComprobanteLiberacion(visita, usuarioNombre) {
     cortar: true
   });
   return okShopping;
+}
+
+// ---------------------------------------------------------------------------
+// Impresión directa del permiso de salida (misma impresora térmica)
+// ---------------------------------------------------------------------------
+
+function construirLineasPermisoSalida(visita, usuarioNombre, motivos, autorizadoPorLocal, rotulo) {
+  const L = [];
+  if (rotulo) L.push({ text: rotulo, bold: true, align: "center" });
+  L.push({ text: "SHOPPING PARIS", bold: true, big: true, align: "center" });
+  L.push({ text: "Permiso de salida de estacionamiento", align: "center" });
+  L.push({ text: "--------------------------------", align: "center" });
+  L.push(...filaComprobante("Guia", visita.guiaNombre));
+  L.push(...filaComprobante("Empresa", visita.empresaNombre));
+  L.push(...filaComprobante("Vehiculo / Chapa", `${visita.vehiculoTipoNombre} - ${visita.chapa}`));
+  L.push(...filaComprobante("N Ticket de estacionamiento", visita.ticketEstacionamiento));
+  L.push(...filaComprobante("Motivo de la salida", (motivos || []).join(" / ") || "-"));
+  L.push(...filaComprobante("Autorizado por local", autorizadoPorLocal || "-"));
+  L.push({ text: "--------------------------------", align: "center" });
+  L.push({ text: `Otorgado por: ${usuarioNombre}` });
+  L.push({ text: `Emitido: ${new Date().toLocaleString("es-PY")}` });
+  // Espacio en blanco para firmar a mano sobre el papel (lapicera), ya que
+  // al ser un ticket térmico no hay firma digital posible.
+  L.push({ text: " " });
+  L.push({ text: " " });
+  L.push({ text: "Firma del guia:" });
+  L.push({ text: "________________________" });
+  L.push({ text: " " });
+  L.push({ text: " " });
+  L.push({ text: "Firma autorizante local:" });
+  L.push({ text: "________________________" });
+  return L;
+}
+
+// Imprime las 2 copias del permiso de salida (una para el guía, una para el
+// local), cada una como un ticket separado.
+async function imprimirPermisoSalida(visita, usuarioNombre, motivos, autorizadoPorLocal) {
+  const logo = await obtenerLogoBase64ParaTicket();
+  const okGuia = await imprimirDirecto({
+    lines: construirLineasPermisoSalida(visita, usuarioNombre, motivos, autorizadoPorLocal, "COPIA: GUÍA"),
+    logo,
+    cortar: true
+  });
+  if (!okGuia) return false;
+  const okLocal = await imprimirDirecto({
+    lines: construirLineasPermisoSalida(visita, usuarioNombre, motivos, autorizadoPorLocal, "COPIA: LOCAL"),
+    logo,
+    cortar: true
+  });
+  return okLocal;
 }
 
 // Guarda el último ticket liberado en el navegador para poder reimprimirlo más
@@ -2894,7 +2960,7 @@ function Shell({ perfil }) {
             </div>
           </div>
           <button className="link-muted" onClick={() => auth.signOut()}>Cerrar sesión</button>
-          <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.1</div>
+          <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.2</div>
         </div>
       </aside>
 

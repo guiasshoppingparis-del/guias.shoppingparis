@@ -2,6 +2,15 @@
 
 Versionado simplificado `vMAJOR.MINOR`. MAJOR = cambios de arquitectura o que rompen datos existentes. MINOR = funcionalidad nueva incremental.
 
+## v1.2 — 2026-08-25
+
+Correcciones y mejoras al flujo de impresión + carga manual de datos.
+
+- Corregido: al reimprimir un ticket desde "🖨️ Reimprimir último ticket", la fecha de ingreso aparecía como "Invalid Date" y la permanencia como "NaN min" — el Timestamp de Firestore pierde su método `.toDate()` al guardarse y recuperarse de `localStorage` vía JSON. Ahora `formatearFechaHora` y `tiempoTranscurrido` reconocen también ese formato "aplanado" (nueva función `aFechaJS`).
+- En "Nuevo ingreso", la **hora de ingreso** ahora se carga a mano (junto al N° de ticket), en vez de tomarse automáticamente del momento en que se registra el formulario — útil cuando el guía entró un rato antes de que se cargue el ingreso en el sistema. Se precarga con la hora actual y se puede editar antes de guardar.
+- **Permiso de salida**: ahora, antes de generar el ticket, se abre un modal para cargar el **motivo de la salida** (checklist: Buscar pasajero / Entregar mercaderías-pedidos / Asuntos administrativos / Taller mecánico-mantenimiento, más un campo de texto libre "Otro motivo" sin checkbox) y el campo obligatorio **"Autorizado por local"**.
+- El permiso de salida **ya no se genera como PDF**: imprime **directo por la ticketera** (2 copias — "COPIA: GUÍA" y "COPIA: LOCAL"), igual que el comprobante de liberación, incluyendo espacio en blanco al final para firmar a mano (guía y autorizante del local). Si falla la impresión, igual que en la liberación: el permiso queda otorgado en la base, se muestra el error, y el botón cambia a "Reintentar impresión". La función de PDF (`generarPdfPermisoSalida`) queda en el código sin usarse, por si hace falta como referencia.
+
 ## v1.1 — 2026-08-24
 
 Impresión directa del comprobante de liberación (impresora térmica).
@@ -13,9 +22,6 @@ Impresión directa del comprobante de liberación (impresora térmica).
 - Nuevo botón **"🖨️ Reimprimir último ticket"** en "Visitas en curso", disponible por unas horas después de cada liberación, por si hace falta reimprimir más tarde.
 - La generación de PDF (`generarPdfLiberacion`) queda en el código sin usarse en este flujo, por si se necesita como referencia o respaldo a futuro.
 - `print-server.js` manda los comandos ESC/POS a la impresora copiando un archivo binario directo a su ruta de impresora compartida por Windows en la misma PC (`\\192.168.58.11\guiaticket`), en vez de un socket TCP directo — la impresora es USB (no de red), así que este es el mecanismo que funciona.
-- Corregido: al reimprimir un ticket desde "🖨️ Reimprimir último ticket", la fecha de ingreso aparecía como "Invalid Date" y la permanencia como "NaN min" — el Timestamp de Firestore pierde su método `.toDate()` al guardarse y recuperarse de `localStorage` vía JSON. Ahora `formatearFechaHora` y `tiempoTranscurrido` reconocen también ese formato "aplanado" (nueva función `aFechaJS`).
-- En "Nuevo ingreso", la **hora de ingreso** ahora se carga a mano (junto al N° de ticket), en vez de tomarse automáticamente del momento en que se registra el formulario — útil cuando el guía entró un rato antes de que se cargue el ingreso en el sistema. Se precarga con la hora actual y se puede editar antes de guardar.
-- **Permiso de salida**: ahora, antes de generar el PDF, se abre un modal para cargar el **motivo de la salida** (checklist: Buscar pasajero / Entregar mercaderías-pedidos / Asuntos administrativos / Taller mecánico-mantenimiento / Otro motivo, con detalle a completar) y el campo obligatorio **"Autorizado por local"**. El PDF ahora incluye esos datos y, al final, dos espacios de firma: uno para el guía y otro para el autorizante del local.
 
 ## v1.0 — 2026-07-18
 
