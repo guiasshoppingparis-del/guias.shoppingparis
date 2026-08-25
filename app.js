@@ -268,7 +268,7 @@ function PanelInicio({ perfil }) {
       </div>
 
       <div className="ticket">
-        <div className="ticket-stub">v1.2</div>
+        <div className="ticket-stub">v1.4</div>
         <div className="ticket-perforation"></div>
         <div className="ticket-body">
           <h2 style={{ fontSize: 16, marginBottom: 6 }}>Versión estable</h2>
@@ -646,6 +646,8 @@ function VisitasView({ perfil, mostrarToast }) {
   const [visitasEnCurso, setVisitasEnCurso] = useState([]);
   const [visitaSeleccionada, setVisitaSeleccionada] = useState(null);
   const [visitaParaPermiso, setVisitaParaPermiso] = useState(null);
+  const [modoPartner, setModoPartner] = useState(false);
+  const [busquedaGuia, setBusquedaGuia] = useState("");
   const [mostrarCierreDia, setMostrarCierreDia] = useState(false);
   const [tick, setTick] = useState(0);
 
@@ -743,6 +745,10 @@ function VisitasView({ perfil, mostrarToast }) {
     }
   }
 
+  const visitasFiltradas = busquedaGuia.trim()
+    ? visitasEnCurso.filter((v) => (v.guiaNombre || "").toLowerCase().includes(busquedaGuia.trim().toLowerCase()))
+    : visitasEnCurso;
+
   return (
     <div>
       <div className="page-header">
@@ -762,9 +768,16 @@ function VisitasView({ perfil, mostrarToast }) {
       />
 
       <div style={{ marginTop: 32 }}>
-        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 14 }}>
-          <h2 style={{ fontSize: 18 }}>Visitas en curso</h2>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 14, flexWrap: "wrap" }}>
+          <h2 style={{ fontSize: 18, whiteSpace: "nowrap" }}>Visitas en curso</h2>
+          <input
+            type="text"
+            value={busquedaGuia}
+            onChange={(e) => setBusquedaGuia(e.target.value)}
+            placeholder="Buscar por nombre de guía..."
+            style={{ flex: "1 1 240px", maxWidth: 420, padding: "8px 12px", border: "1px solid var(--line)", borderRadius: 8 }}
+          />
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginLeft: "auto" }}>
             <span className="badge badge-gold">{visitasEnCurso.length}</span>
             {puedeLiberar && ultimoTicket && (
               <button
@@ -789,9 +802,16 @@ function VisitasView({ perfil, mostrarToast }) {
               <p>Los ingresos que registres van a aparecer acá.</p>
             </div>
           </div>
+        ) : visitasFiltradas.length === 0 ? (
+          <div className="panel">
+            <div className="empty-state">
+              <div className="display">Sin resultados</div>
+              <p>No hay ningún guía en curso que coincida con "{busquedaGuia}".</p>
+            </div>
+          </div>
         ) : (
           <div className="ticket-grid">
-            {visitasEnCurso.map((v) => {
+            {visitasFiltradas.map((v) => {
               const porcentaje = v.montoMinimoRequerido > 0
                 ? Math.min(100, Math.round((v.montoAcumulado / v.montoMinimoRequerido) * 100))
                 : 0;
@@ -844,9 +864,24 @@ function VisitasView({ perfil, mostrarToast }) {
                         <button
                           className="btn btn-gold"
                           style={{ flex: 1 }}
-                          onClick={() => setVisitaSeleccionada(v)}
+                          onClick={() => {
+                            setModoPartner(false);
+                            setVisitaSeleccionada(v);
+                          }}
                         >
                           {alcanzado ? "Liberar estacionamiento" : "Registrar compra"}
+                        </button>
+                      )}
+                      {puedeLiberar && !alcanzado && (
+                        <button
+                          className="btn btn-ghost"
+                          onClick={() => {
+                            setModoPartner(true);
+                            setVisitaSeleccionada(v);
+                          }}
+                          title="Liberar sin monto mínimo — solo para tiendas Partner del shopping"
+                        >
+                          Partner
                         </button>
                       )}
                       {tienePermiso(perfil, "registrar_visitas") && (
@@ -871,8 +906,10 @@ function VisitasView({ perfil, mostrarToast }) {
         <ModalLiberarVisita
           visita={visitaSeleccionada}
           perfil={perfil}
+          modoPartner={modoPartner}
           onClose={() => {
             setVisitaSeleccionada(null);
+            setModoPartner(false);
             setUltimoTicket(obtenerUltimoTicketLiberado());
           }}
           mostrarToast={mostrarToast}
@@ -1338,7 +1375,7 @@ function ModalPermisoSalida({ visita, perfil, onClose, mostrarToast }) {
         <label>Autorizado por local *</label>
         <input
           value={autorizadoPorLocal}
-          onChange={(e) => setAutorizadoPorLocal(e.target.value)}
+          onChange={(e) => setAutorizadoPorLocal(e.target.value.toUpperCase())}
           placeholder="Nombre de quien autoriza desde el local"
           required
           disabled={yaOtorgado}
@@ -1490,7 +1527,7 @@ function filaComprobante(etiqueta, valor) {
   ];
 }
 
-function construirLineasComprobante(visita, usuarioNombre, rotulo) {
+function construirLineasComprobante(visita, usuarioNombre, rotulo, partner) {
   const L = [];
   if (rotulo) L.push({ text: rotulo, bold: true, align: "center" });
   L.push({ text: "SHOPPING PARIS", bold: true, big: true, align: "center" });
@@ -1504,7 +1541,11 @@ function construirLineasComprobante(visita, usuarioNombre, rotulo) {
   L.push(...filaComprobante("Ingreso", formatearFechaHora(visita.fechaHoraIngreso)));
   L.push(...filaComprobante("Salida", formatearFechaHora(visita.fechaHoraSalida || new Date())));
   L.push(...filaComprobante("Tiempo de permanencia", tiempoTranscurrido(visita.fechaHoraIngreso)));
-  L.push(...filaComprobante("Monto acumulado en compras", `$ ${Number(visita.montoAcumulado || 0).toLocaleString("es-AR")}`));
+  if (partner) {
+    L.push(...filaComprobante("Liberacion", "PARTNER (sin monto minimo)"));
+  } else {
+    L.push(...filaComprobante("Monto acumulado en compras", `$ ${Number(visita.montoAcumulado || 0).toLocaleString("es-AR")}`));
+  }
   L.push({ text: "--------------------------------", align: "center" });
   L.push({ text: `Liberado por: ${usuarioNombre}` });
   L.push({ text: `Emitido: ${new Date().toLocaleString("es-PY")}` });
@@ -1518,17 +1559,18 @@ async function obtenerLogoBase64ParaTicket() {
 }
 
 // Imprime las 2 copias del comprobante (una para el guía, una para el shopping),
-// cada una como un ticket separado (corta papel entre una y otra).
-async function imprimirComprobanteLiberacion(visita, usuarioNombre) {
+// cada una como un ticket separado (corta papel entre una y otra). "partner"
+// indica que se liberó sin exigir el monto mínimo (tienda Partner del shopping).
+async function imprimirComprobanteLiberacion(visita, usuarioNombre, partner) {
   const logo = await obtenerLogoBase64ParaTicket();
   const okGuia = await imprimirDirecto({
-    lines: construirLineasComprobante(visita, usuarioNombre, "COPIA: GUÍA"),
+    lines: construirLineasComprobante(visita, usuarioNombre, "COPIA: GUÍA", partner),
     logo,
     cortar: true
   });
   if (!okGuia) return false;
   const okShopping = await imprimirDirecto({
-    lines: construirLineasComprobante(visita, usuarioNombre, "COPIA: SHOPPING"),
+    lines: construirLineasComprobante(visita, usuarioNombre, "COPIA: SHOPPING", partner),
     logo,
     cortar: true
   });
@@ -1549,8 +1591,9 @@ function construirLineasPermisoSalida(visita, usuarioNombre, motivos, autorizado
   L.push(...filaComprobante("Empresa", visita.empresaNombre));
   L.push(...filaComprobante("Vehiculo / Chapa", `${visita.vehiculoTipoNombre} - ${visita.chapa}`));
   L.push(...filaComprobante("N Ticket de estacionamiento", visita.ticketEstacionamiento));
+  L.push({ barcode: String(visita.ticketEstacionamiento), align: "center" });
   L.push(...filaComprobante("Motivo de la salida", (motivos || []).join(" / ") || "-"));
-  L.push(...filaComprobante("Autorizado por local", autorizadoPorLocal || "-"));
+  L.push(...filaComprobante("Autorizado por local", (autorizadoPorLocal || "-").toUpperCase()));
   L.push({ text: "--------------------------------", align: "center" });
   L.push({ text: `Otorgado por: ${usuarioNombre}` });
   L.push({ text: `Emitido: ${new Date().toLocaleString("es-PY")}` });
@@ -1608,7 +1651,7 @@ function obtenerUltimoTicketLiberado() {
   }
 }
 
-function ModalLiberarVisita({ visita, perfil, onClose, mostrarToast }) {
+function ModalLiberarVisita({ visita, perfil, modoPartner, onClose, mostrarToast }) {
   const [montoNuevo, setMontoNuevo] = useState("");
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState("");
@@ -1616,7 +1659,7 @@ function ModalLiberarVisita({ visita, perfil, onClose, mostrarToast }) {
   const porcentaje = visita.montoMinimoRequerido > 0
     ? Math.min(100, Math.round((visita.montoAcumulado / visita.montoMinimoRequerido) * 100))
     : 0;
-  const alcanzado = visita.montoAcumulado >= visita.montoMinimoRequerido;
+  const alcanzado = !!modoPartner || visita.montoAcumulado >= visita.montoMinimoRequerido;
   const falta = Math.max(0, visita.montoMinimoRequerido - visita.montoAcumulado);
 
   async function agregarMonto(e) {
@@ -1654,7 +1697,8 @@ function ModalLiberarVisita({ visita, perfil, onClose, mostrarToast }) {
         estado: "liberado",
         fechaHoraSalida: firebase.firestore.FieldValue.serverTimestamp(),
         usuarioSalidaId: perfil.id,
-        usuarioSalidaNombre: perfil.nombre
+        usuarioSalidaNombre: perfil.nombre,
+        liberadoComoPartner: !!modoPartner
       });
       setYaLiberado(true);
     } catch (err) {
@@ -1669,7 +1713,7 @@ function ModalLiberarVisita({ visita, perfil, onClose, mostrarToast }) {
   async function intentarImprimir() {
     setCargando(true);
     setError("");
-    const ok = await imprimirComprobanteLiberacion(visita, perfil.nombre);
+    const ok = await imprimirComprobanteLiberacion(visita, perfil.nombre, modoPartner);
     if (ok) {
       guardarUltimoTicketLiberado(visita, perfil.nombre);
       mostrarToast(`Estacionamiento liberado: ${visita.guiaNombre}`);
@@ -1695,47 +1739,64 @@ function ModalLiberarVisita({ visita, perfil, onClose, mostrarToast }) {
         <span><strong>En sala:</strong> {tiempoTranscurrido(visita.fechaHoraIngreso)}</span>
       </div>
 
-      <div style={{ marginBottom: 18 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 6 }}>
-          <span>
-            $ {Number(visita.montoAcumulado || 0).toLocaleString("es-AR")} de $ {Number(visita.montoMinimoRequerido || 0).toLocaleString("es-AR")}
-          </span>
-          <span style={{ fontWeight: 600 }}>{porcentaje}%</span>
+      {modoPartner ? (
+        <div
+          style={{
+            background: "var(--paper)",
+            border: "1px solid var(--gold)",
+            borderRadius: 8,
+            padding: "10px 12px",
+            marginBottom: 18,
+            fontSize: 13
+          }}
+        >
+          <strong>Liberación Partner:</strong> se va a liberar el estacionamiento sin exigir el monto mínimo de compra, ya que la empresa es tienda Partner del shopping.
         </div>
-        <div style={{ height: 8, borderRadius: 4, background: "var(--paper)", overflow: "hidden" }}>
-          <div
-            style={{
-              height: "100%",
-              width: `${porcentaje}%`,
-              background: alcanzado ? "var(--success)" : "var(--gold)",
-              transition: "width 0.2s ease"
-            }}
-          ></div>
-        </div>
-        {!alcanzado && (
-          <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 6 }}>
-            Faltan $ {falta.toLocaleString("es-AR")} para liberar el estacionamiento.
-          </p>
-        )}
-        {alcanzado && (
-          <p style={{ fontSize: 12, color: "var(--success)", marginTop: 6, fontWeight: 600 }}>
-            ✓ Alcanzó el monto mínimo — ya se puede liberar.
-          </p>
-        )}
-      </div>
+      ) : (
+        <React.Fragment>
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 6 }}>
+              <span>
+                $ {Number(visita.montoAcumulado || 0).toLocaleString("es-AR")} de $ {Number(visita.montoMinimoRequerido || 0).toLocaleString("es-AR")}
+              </span>
+              <span style={{ fontWeight: 600 }}>{porcentaje}%</span>
+            </div>
+            <div style={{ height: 8, borderRadius: 4, background: "var(--paper)", overflow: "hidden" }}>
+              <div
+                style={{
+                  height: "100%",
+                  width: `${porcentaje}%`,
+                  background: alcanzado ? "var(--success)" : "var(--gold)",
+                  transition: "width 0.2s ease"
+                }}
+              ></div>
+            </div>
+            {!alcanzado && (
+              <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 6 }}>
+                Faltan $ {falta.toLocaleString("es-AR")} para liberar el estacionamiento.
+              </p>
+            )}
+            {alcanzado && (
+              <p style={{ fontSize: 12, color: "var(--success)", marginTop: 6, fontWeight: 600 }}>
+                ✓ Alcanzó el monto mínimo — ya se puede liberar.
+              </p>
+            )}
+          </div>
 
-      <form onSubmit={agregarMonto} style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-        <input
-          type="number"
-          min="0"
-          step="0.01"
-          placeholder="Monto del comprobante"
-          value={montoNuevo}
-          onChange={(e) => setMontoNuevo(e.target.value)}
-          style={{ flex: 1, padding: "10px 12px", border: "1px solid var(--line)", borderRadius: 8 }}
-        />
-        <button className="btn btn-ghost" disabled={cargando}>Agregar</button>
-      </form>
+          <form onSubmit={agregarMonto} style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              placeholder="Monto del comprobante"
+              value={montoNuevo}
+              onChange={(e) => setMontoNuevo(e.target.value)}
+              style={{ flex: 1, padding: "10px 12px", border: "1px solid var(--line)", borderRadius: 8 }}
+            />
+            <button className="btn btn-ghost" disabled={cargando}>Agregar</button>
+          </form>
+        </React.Fragment>
+      )}
 
       <button
         className="btn btn-primary"
@@ -2960,7 +3021,7 @@ function Shell({ perfil }) {
             </div>
           </div>
           <button className="link-muted" onClick={() => auth.signOut()}>Cerrar sesión</button>
-          <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.2</div>
+          <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.4</div>
         </div>
       </aside>
 

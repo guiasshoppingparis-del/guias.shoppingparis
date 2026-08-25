@@ -2,6 +2,20 @@
 
 Versionado simplificado `vMAJOR.MINOR`. MAJOR = cambios de arquitectura o que rompen datos existentes. MINOR = funcionalidad nueva incremental.
 
+## v1.4 — 2026-08-25
+
+Buscador de guías + liberación Partner sin monto mínimo.
+
+- **Buscador** por nombre de guía en "Visitas en curso", junto al título — filtra la grilla de tarjetas a medida que se escribe, para no tener que recorrerlas todas cuando hay muchas visitas activas.
+- Nuevo botón **"Partner"** en cada tarjeta (visible cuando todavía no se alcanzó el monto mínimo): permite liberar el estacionamiento sin exigir compra, para las empresas que son tiendas Partner del shopping. Abre el mismo modal de liberación, pero con un aviso claro y sin el formulario de carga de monto. Se guarda `liberadoComoPartner: true` en el registro, y el ticket impreso muestra "Liberación: PARTNER (sin monto mínimo)" en vez de la línea de monto acumulado.
+
+## v1.3 — 2026-08-25
+
+Correcciones al ticket de permiso de salida.
+
+- El ticket de permiso de salida ahora imprime el **código de barras** (CODE128) debajo del N° de ticket de estacionamiento — se había agregado en el comprobante de liberación pero faltaba en este.
+- El campo **"Autorizado por local"** ahora se guarda e imprime siempre en **mayúsculas** (se convierte a medida que se escribe, igual que la chapa del vehículo).
+
 ## v1.2 — 2026-08-25
 
 Correcciones y mejoras al flujo de impresión + carga manual de datos.
