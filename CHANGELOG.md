@@ -2,6 +2,17 @@
 
 Versionado simplificado `vMAJOR.MINOR`. MAJOR = cambios de arquitectura o que rompen datos existentes. MINOR = funcionalidad nueva incremental.
 
+## v1.6 — 2026-08-25
+
+Reportes detallados con exportación a PDF.
+
+- Las 4 tarjetas de "Actividad por período" en Reportes (Personas ingresadas, Vehículos ingresados, Liberados, No liberados) ahora son clickeables. Cada una abre un modal con el detalle completo del período consultado:
+  - **Personas ingresadas** → agrupado por guía, con cantidad de visitas y total de pasajeros por guía.
+  - **Vehículos ingresados** → listado completo con fecha, guía, empresa, vehículo, chapa, pasajeros, ticket y estado.
+  - **Liberados** → listado con fecha de ingreso/salida, guía, empresa, vehículo, ticket y monto acumulado.
+  - **No liberados** → mismo detalle que ya tenía la tabla "Guías no liberados" más abajo, ahora también accesible desde la tarjeta.
+- Cada modal tiene un botón **"Descargar PDF"** que genera el reporte tabulado (usando el plugin `jspdf-autotable`, agregado al proyecto) con encabezado, período consultado y cantidad de registros.
+
 ## v1.5 — 2026-08-25
 
 Reordenamiento de botones en las tarjetas de "Visitas en curso".

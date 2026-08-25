@@ -268,7 +268,7 @@ function PanelInicio({ perfil }) {
       </div>
 
       <div className="ticket">
-        <div className="ticket-stub">v1.5</div>
+        <div className="ticket-stub">v1.6</div>
         <div className="ticket-perforation"></div>
         <div className="ticket-body">
           <h2 style={{ fontSize: 16, marginBottom: 6 }}>Versión estable</h2>
@@ -2217,6 +2217,139 @@ function fechaISO(date) {
   return `${y}-${m}-${d}`;
 }
 
+const ESTADO_VISITA_LABEL = { en_curso: "En curso", liberado: "Liberado", no_liberado: "No liberado" };
+
+// Agrupa las visitas por guía para el reporte de "personas ingresadas por guía".
+function agruparPersonasPorGuia(visitas) {
+  const mapa = new Map();
+  for (const v of visitas) {
+    const key = v.guiaNombre || "(sin nombre)";
+    if (!mapa.has(key)) {
+      mapa.set(key, { guia: key, empresa: v.empresaNombre || "", visitas: 0, pasajeros: 0 });
+    }
+    const item = mapa.get(key);
+    item.visitas += 1;
+    item.pasajeros += Number(v.cantPasajeros) || 0;
+  }
+  return Array.from(mapa.values()).sort((a, b) => b.pasajeros - a.pasajeros);
+}
+
+// Configuración de los 4 reportes desplegables desde las tarjetas de "Actividad por período".
+const REPORTES_DETALLE_CONFIG = {
+  personas: {
+    titulo: "Personas ingresadas por guía",
+    columnas: ["Guía", "Empresa", "Visitas", "Pasajeros"],
+    datos: (visitas) => agruparPersonasPorGuia(visitas),
+    filas: (datos) => datos.map((r) => [r.guia, r.empresa, r.visitas, r.pasajeros])
+  },
+  vehiculos: {
+    titulo: "Vehículos ingresados",
+    columnas: ["Fecha ingreso", "Guía", "Empresa", "Vehículo", "Chapa", "Pasajeros", "Ticket", "Estado"],
+    datos: (visitas) => visitas,
+    filas: (datos) => datos.map((v) => [
+      formatearFechaHora(v.fechaHoraIngreso),
+      v.guiaNombre,
+      v.empresaNombre,
+      v.vehiculoTipoNombre,
+      v.chapa,
+      v.cantPasajeros,
+      v.ticketEstacionamiento,
+      ESTADO_VISITA_LABEL[v.estado] || v.estado
+    ])
+  },
+  liberados: {
+    titulo: "Vehículos liberados",
+    columnas: ["Fecha ingreso", "Fecha salida", "Guía", "Empresa", "Vehículo", "Ticket", "Monto acumulado"],
+    datos: (visitas) => visitas.filter((v) => v.estado === "liberado"),
+    filas: (datos) => datos.map((v) => [
+      formatearFechaHora(v.fechaHoraIngreso),
+      formatearFechaHora(v.fechaHoraSalida),
+      v.guiaNombre,
+      v.empresaNombre,
+      `${v.vehiculoTipoNombre} - ${v.chapa}`,
+      v.ticketEstacionamiento,
+      `$ ${Number(v.montoAcumulado || 0).toLocaleString("es-AR")}`
+    ])
+  },
+  no_liberados: {
+    titulo: "Vehículos no liberados",
+    columnas: ["Fecha", "Guía", "Empresa", "Vehículo", "Pasajeros", "Monto / Mínimo", "Faltó"],
+    datos: (visitas) => visitas.filter((v) => v.estado === "no_liberado"),
+    filas: (datos) => datos.map((v) => [
+      formatearFechaHora(v.fechaHoraIngreso),
+      v.guiaNombre,
+      v.empresaNombre,
+      `${v.vehiculoTipoNombre} · ${v.chapa}`,
+      v.cantPasajeros,
+      `$ ${Number(v.montoAcumulado || 0).toLocaleString("es-AR")} / $ ${Number(v.montoMinimoRequerido || 0).toLocaleString("es-AR")}`,
+      `$ ${Math.max(0, (v.montoMinimoRequerido || 0) - (v.montoAcumulado || 0)).toLocaleString("es-AR")}`
+    ])
+  }
+};
+
+function ModalReporteDetalle({ tipo, visitas, desde, hasta, onClose }) {
+  const config = REPORTES_DETALLE_CONFIG[tipo];
+  const datos = config.datos(visitas);
+  const filas = config.filas(datos);
+
+  function descargarPDF() {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(14);
+    doc.text("SHOPPING PARIS", 14, 15);
+    doc.setFontSize(11);
+    doc.text(config.titulo, 14, 22);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.text(`Período: ${desde} a ${hasta} — ${filas.length} ${filas.length === 1 ? "registro" : "registros"}`, 14, 28);
+    doc.autoTable({
+      startY: 33,
+      head: [config.columnas],
+      body: filas,
+      styles: { fontSize: 8, cellPadding: 2.5 },
+      headStyles: { fillColor: [31, 78, 120], textColor: 255 },
+      alternateRowStyles: { fillColor: [245, 243, 237] }
+    });
+    doc.save(`reporte-${tipo}-${desde}-a-${hasta}.pdf`);
+  }
+
+  return (
+    <Modal titulo={config.titulo} onClose={onClose}>
+      <p style={{ fontSize: 13, color: "var(--text-muted)", marginTop: -4, marginBottom: 14 }}>
+        Período: {desde} a {hasta} — {filas.length} {filas.length === 1 ? "registro" : "registros"}
+      </p>
+      <div style={{ maxHeight: 420, overflow: "auto", marginBottom: 18, border: "1px solid var(--line)", borderRadius: 8 }}>
+        <table className="data-table">
+          <thead>
+            <tr>
+              {config.columnas.map((c) => <th key={c}>{c}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {filas.length === 0 ? (
+              <tr>
+                <td colSpan={config.columnas.length} style={{ textAlign: "center", color: "var(--text-muted)", padding: 20 }}>
+                  Sin registros en este período.
+                </td>
+              </tr>
+            ) : (
+              filas.map((fila, i) => (
+                <tr key={i}>
+                  {fila.map((celda, j) => <td key={j}>{celda}</td>)}
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+      <button className="btn btn-primary" style={{ width: "100%" }} onClick={descargarPDF} disabled={filas.length === 0}>
+        Descargar PDF
+      </button>
+    </Modal>
+  );
+}
+
 function ReportesView() {
   const hoy = new Date();
   const [desde, setDesde] = useState(fechaISO(hoy));
@@ -2225,6 +2358,7 @@ function ReportesView() {
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState("");
   const [consultado, setConsultado] = useState(false);
+  const [reporteAbierto, setReporteAbierto] = useState(null);
 
   async function consultar(e) {
     if (e) e.preventDefault();
@@ -2315,23 +2449,65 @@ function ReportesView() {
       {consultado && (
         <React.Fragment>
           <div className="stat-grid">
-            <div className="stat-card">
+            <div
+              className="stat-card"
+              role="button"
+              tabIndex={0}
+              style={{ cursor: "pointer" }}
+              onClick={() => setReporteAbierto("personas")}
+              title="Ver detalle por guía"
+            >
               <div className="stat-label">Personas ingresadas</div>
               <div className="stat-value">{totalPersonas}</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>Ver detalle →</div>
             </div>
-            <div className="stat-card">
+            <div
+              className="stat-card"
+              role="button"
+              tabIndex={0}
+              style={{ cursor: "pointer" }}
+              onClick={() => setReporteAbierto("vehiculos")}
+              title="Ver detalle de vehículos ingresados"
+            >
               <div className="stat-label">Vehículos ingresados</div>
               <div className="stat-value">{totalVehiculos}</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>Ver detalle →</div>
             </div>
-            <div className="stat-card">
+            <div
+              className="stat-card"
+              role="button"
+              tabIndex={0}
+              style={{ cursor: "pointer" }}
+              onClick={() => setReporteAbierto("liberados")}
+              title="Ver detalle de vehículos liberados"
+            >
               <div className="stat-label">Liberados</div>
               <div className="stat-value" style={{ color: "var(--success)" }}>{liberadas}</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>Ver detalle →</div>
             </div>
-            <div className="stat-card">
+            <div
+              className="stat-card"
+              role="button"
+              tabIndex={0}
+              style={{ cursor: "pointer" }}
+              onClick={() => setReporteAbierto("no_liberados")}
+              title="Ver detalle de vehículos no liberados"
+            >
               <div className="stat-label">No liberados</div>
               <div className="stat-value" style={{ color: "var(--alert)" }}>{noLiberadas}</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>Ver detalle →</div>
             </div>
           </div>
+
+          {reporteAbierto && (
+            <ModalReporteDetalle
+              tipo={reporteAbierto}
+              visitas={visitas}
+              desde={desde}
+              hasta={hasta}
+              onClose={() => setReporteAbierto(null)}
+            />
+          )}
 
           {enCurso > 0 && (
             <p style={{ fontSize: 13, color: "var(--text-muted)", marginTop: -14, marginBottom: 20 }}>
@@ -3024,7 +3200,7 @@ function Shell({ perfil }) {
             </div>
           </div>
           <button className="link-muted" onClick={() => auth.signOut()}>Cerrar sesión</button>
-          <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.5</div>
+          <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.6</div>
         </div>
       </aside>
 
