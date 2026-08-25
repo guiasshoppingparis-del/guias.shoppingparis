@@ -2,6 +2,12 @@
 
 Versionado simplificado `vMAJOR.MINOR`. MAJOR = cambios de arquitectura o que rompen datos existentes. MINOR = funcionalidad nueva incremental.
 
+## v1.5 — 2026-08-25
+
+Reordenamiento de botones en las tarjetas de "Visitas en curso".
+
+- Con el botón "Partner" agregado en v1.4, la fila de 3 botones ("Registrar compra" / "Partner" / "✕") quedaba apretada y el de anular se cortaba en tarjetas angostas. Ahora "Registrar compra" / "Liberar estacionamiento" ocupa una fila propia (ancho completo), y "Partner" + "Anular visita" van debajo en una segunda fila. El botón de anular ahora dice "✕ Anular visita" (antes solo el ícono) para que sea más claro qué hace.
+
 ## v1.4 — 2026-08-25
 
 Buscador de guías + liberación Partner sin monto mínimo.

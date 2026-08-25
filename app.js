@@ -268,7 +268,7 @@ function PanelInicio({ perfil }) {
       </div>
 
       <div className="ticket">
-        <div className="ticket-stub">v1.4</div>
+        <div className="ticket-stub">v1.5</div>
         <div className="ticket-perforation"></div>
         <div className="ticket-body">
           <h2 style={{ fontSize: 16, marginBottom: 6 }}>Versión estable</h2>
@@ -859,22 +859,24 @@ function VisitasView({ perfil, mostrarToast }) {
                       </button>
                     )}
 
+                    {puedeLiberar && (
+                      <button
+                        className="btn btn-gold"
+                        style={{ width: "100%", marginTop: 8 }}
+                        onClick={() => {
+                          setModoPartner(false);
+                          setVisitaSeleccionada(v);
+                        }}
+                      >
+                        {alcanzado ? "Liberar estacionamiento" : "Registrar compra"}
+                      </button>
+                    )}
+
                     <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                      {puedeLiberar && (
-                        <button
-                          className="btn btn-gold"
-                          style={{ flex: 1 }}
-                          onClick={() => {
-                            setModoPartner(false);
-                            setVisitaSeleccionada(v);
-                          }}
-                        >
-                          {alcanzado ? "Liberar estacionamiento" : "Registrar compra"}
-                        </button>
-                      )}
                       {puedeLiberar && !alcanzado && (
                         <button
                           className="btn btn-ghost"
+                          style={{ flex: 1 }}
                           onClick={() => {
                             setModoPartner(true);
                             setVisitaSeleccionada(v);
@@ -887,10 +889,11 @@ function VisitasView({ perfil, mostrarToast }) {
                       {tienePermiso(perfil, "registrar_visitas") && (
                         <button
                           className="btn btn-danger"
+                          style={!alcanzado ? undefined : { marginLeft: "auto" }}
                           onClick={() => anularVisita(v)}
                           title="Anular esta visita (se cargó por error)"
                         >
-                          ✕
+                          ✕ Anular visita
                         </button>
                       )}
                     </div>
@@ -3021,7 +3024,7 @@ function Shell({ perfil }) {
             </div>
           </div>
           <button className="link-muted" onClick={() => auth.signOut()}>Cerrar sesión</button>
-          <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.4</div>
+          <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.5</div>
         </div>
       </aside>
 
