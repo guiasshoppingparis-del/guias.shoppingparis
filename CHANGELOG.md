@@ -2,6 +2,12 @@
 
 Versionado simplificado `vMAJOR.MINOR`. MAJOR = cambios de arquitectura o que rompen datos existentes. MINOR = funcionalidad nueva incremental.
 
+## v1.7 — 2026-08-25
+
+Ajuste de tamaño del modal de reportes detallados.
+
+- El modal de "Ver detalle" en Reportes (v1.6) quedaba angosto para tablas con muchas columnas (ej. "Vehículos ingresados" con 8 columnas) — se veían cortadas y era confuso navegar. El componente `Modal` ahora acepta un ancho personalizado, y este reporte en particular usa uno más amplio (1100px) con scroll horizontal interno cuando hace falta, sin afectar el tamaño de los demás modales del sistema.
+
 ## v1.6 — 2026-08-25
 
 Reportes detallados con exportación a PDF.

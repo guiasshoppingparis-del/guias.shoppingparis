@@ -194,10 +194,10 @@ function Login() {
 // Modal genérico
 // ---------------------------------------------------------------------------
 
-function Modal({ titulo, onClose, children, footer }) {
+function Modal({ titulo, onClose, children, footer, ancho }) {
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal">
+      <div className="modal" style={ancho ? { maxWidth: ancho } : undefined}>
         <div className="modal-header">
           <h2>{titulo}</h2>
           <button className="icon-btn" onClick={onClose} aria-label="Cerrar">✕</button>
@@ -268,7 +268,7 @@ function PanelInicio({ perfil }) {
       </div>
 
       <div className="ticket">
-        <div className="ticket-stub">v1.6</div>
+        <div className="ticket-stub">v1.7</div>
         <div className="ticket-perforation"></div>
         <div className="ticket-body">
           <h2 style={{ fontSize: 16, marginBottom: 6 }}>Versión estable</h2>
@@ -2315,15 +2315,15 @@ function ModalReporteDetalle({ tipo, visitas, desde, hasta, onClose }) {
   }
 
   return (
-    <Modal titulo={config.titulo} onClose={onClose}>
+    <Modal titulo={config.titulo} onClose={onClose} ancho="1100px">
       <p style={{ fontSize: 13, color: "var(--text-muted)", marginTop: -4, marginBottom: 14 }}>
         Período: {desde} a {hasta} — {filas.length} {filas.length === 1 ? "registro" : "registros"}
       </p>
-      <div style={{ maxHeight: 420, overflow: "auto", marginBottom: 18, border: "1px solid var(--line)", borderRadius: 8 }}>
-        <table className="data-table">
+      <div style={{ maxHeight: "55vh", overflow: "auto", marginBottom: 18, border: "1px solid var(--line)", borderRadius: 8 }}>
+        <table className="data-table" style={{ minWidth: "max-content" }}>
           <thead>
             <tr>
-              {config.columnas.map((c) => <th key={c}>{c}</th>)}
+              {config.columnas.map((c) => <th key={c} style={{ whiteSpace: "nowrap" }}>{c}</th>)}
             </tr>
           </thead>
           <tbody>
@@ -2336,7 +2336,7 @@ function ModalReporteDetalle({ tipo, visitas, desde, hasta, onClose }) {
             ) : (
               filas.map((fila, i) => (
                 <tr key={i}>
-                  {fila.map((celda, j) => <td key={j}>{celda}</td>)}
+                  {fila.map((celda, j) => <td key={j} style={{ whiteSpace: "nowrap" }}>{celda}</td>)}
                 </tr>
               ))
             )}
@@ -3200,7 +3200,7 @@ function Shell({ perfil }) {
             </div>
           </div>
           <button className="link-muted" onClick={() => auth.signOut()}>Cerrar sesión</button>
-          <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.6</div>
+          <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.7</div>
         </div>
       </aside>
 
