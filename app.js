@@ -616,9 +616,23 @@ function ModalRol({ rol, onClose, mostrarToast }) {
 // Vista: Visitas (ingreso de guías a la sala)
 // ---------------------------------------------------------------------------
 
+// Convierte a un objeto Date de JS un valor de fecha que puede venir en 3
+// formatos distintos: un Timestamp de Firestore "vivo" (con método .toDate),
+// el mismo Timestamp ya "aplanado" a {seconds, nanoseconds} — que es lo que
+// queda después de un JSON.stringify/parse, como al guardar en localStorage
+// para la reimpresión — o un valor común (string, número, Date). Devuelve
+// null si no se puede interpretar.
+function aFechaJS(fecha) {
+  if (!fecha) return null;
+  if (typeof fecha.toDate === "function") return fecha.toDate();
+  if (typeof fecha.seconds === "number") return new Date(fecha.seconds * 1000);
+  const d = new Date(fecha);
+  return isNaN(d.getTime()) ? null : d;
+}
+
 function tiempoTranscurrido(fecha) {
-  if (!fecha) return "—";
-  const inicio = fecha.toDate ? fecha.toDate() : new Date(fecha);
+  const inicio = aFechaJS(fecha);
+  if (!inicio) return "—";
   const minutos = Math.max(0, Math.floor((Date.now() - inicio.getTime()) / 60000));
   const h = Math.floor(minutos / 60);
   const m = minutos % 60;
@@ -884,6 +898,11 @@ function VisitasView({ perfil, mostrarToast }) {
   );
 }
 
+function horaActualHHMM() {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
 function FormularioVisita({ guias, empresas, tiposVehiculo, perfil, mostrarToast }) {
   const [nombreGuia, setNombreGuia] = useState("");
   const [guiaSeleccionado, setGuiaSeleccionado] = useState(null);
@@ -893,6 +912,7 @@ function FormularioVisita({ guias, empresas, tiposVehiculo, perfil, mostrarToast
   const [vehiculoTipoId, setVehiculoTipoId] = useState("");
   const [chapa, setChapa] = useState("");
   const [ticket, setTicket] = useState("");
+  const [horaIngreso, setHoraIngreso] = useState(horaActualHHMM());
   const [error, setError] = useState("");
   const [cargando, setCargando] = useState(false);
 
@@ -921,12 +941,13 @@ function FormularioVisita({ guias, empresas, tiposVehiculo, perfil, mostrarToast
     setVehiculoTipoId("");
     setChapa("");
     setTicket("");
+    setHoraIngreso(horaActualHHMM());
   }
 
   async function registrarIngreso(e) {
     e.preventDefault();
     setError("");
-    if (!nombreGuia.trim() || !empresaId || !vehiculoTipoId || !chapa.trim() || !ticket.trim() || !cantPasajeros) {
+    if (!nombreGuia.trim() || !empresaId || !vehiculoTipoId || !chapa.trim() || !ticket.trim() || !cantPasajeros || !horaIngreso) {
       setError("Completá todos los campos para registrar el ingreso.");
       return;
     }
@@ -944,6 +965,14 @@ function FormularioVisita({ guias, empresas, tiposVehiculo, perfil, mostrarToast
       const empresa = empresas.find((e) => e.id === empresaId);
       const tipoVehiculo = tiposVehiculo.find((t) => t.id === vehiculoTipoId);
 
+      // La hora de ingreso se carga a mano (el guía puede haber entrado un
+      // rato antes de que se registre en el sistema), tomando como fecha
+      // "hoy" — combinamos la hora elegida con la fecha del momento en que
+      // se está cargando el formulario.
+      const [hh, mm] = horaIngreso.split(":").map(Number);
+      const fechaHoraIngreso = new Date();
+      fechaHoraIngreso.setHours(hh, mm, 0, 0);
+
       await db.collection("visitas").add({
         guiaId,
         guiaNombre: nombreGuia.trim(),
@@ -957,7 +986,7 @@ function FormularioVisita({ guias, empresas, tiposVehiculo, perfil, mostrarToast
         ticketEstacionamiento: ticket.trim(),
         estado: "en_curso",
         montoAcumulado: 0,
-        fechaHoraIngreso: firebase.firestore.FieldValue.serverTimestamp(),
+        fechaHoraIngreso: firebase.firestore.Timestamp.fromDate(fechaHoraIngreso),
         usuarioIngresoId: perfil.id,
         usuarioIngresoNombre: perfil.nombre
       });
@@ -1045,14 +1074,25 @@ function FormularioVisita({ guias, empresas, tiposVehiculo, perfil, mostrarToast
             </div>
           </div>
 
-          <div className="field">
-            <label>Ticket de estacionamiento</label>
-            <input
-              value={ticket}
-              onChange={(e) => setTicket(e.target.value.toUpperCase())}
-              placeholder="Número impreso en el ticket"
-              required
-            />
+          <div className="field-row">
+            <div className="field">
+              <label>Ticket de estacionamiento</label>
+              <input
+                value={ticket}
+                onChange={(e) => setTicket(e.target.value.toUpperCase())}
+                placeholder="Número impreso en el ticket"
+                required
+              />
+            </div>
+            <div className="field">
+              <label>Hora de ingreso</label>
+              <input
+                type="time"
+                value={horaIngreso}
+                onChange={(e) => setHoraIngreso(e.target.value)}
+                required
+              />
+            </div>
           </div>
 
           <button className="btn btn-primary" disabled={cargando} style={{ width: "auto", padding: "11px 24px" }}>
@@ -1069,8 +1109,8 @@ function FormularioVisita({ guias, empresas, tiposVehiculo, perfil, mostrarToast
 // ---------------------------------------------------------------------------
 
 function formatearFechaHora(fecha) {
-  if (!fecha) return "—";
-  const d = fecha.toDate ? fecha.toDate() : new Date(fecha);
+  const d = aFechaJS(fecha);
+  if (!d) return "—";
   return d.toLocaleString("es-PY", { dateStyle: "short", timeStyle: "short" });
 }
 

@@ -4,15 +4,17 @@ Versionado simplificado `vMAJOR.MINOR`. MAJOR = cambios de arquitectura o que ro
 
 ## v1.1 — 2026-08-24
 
-Impresión directa del comprobante de liberación (impresora térmica de red).
+Impresión directa del comprobante de liberación (impresora térmica).
 
-- El botón "Liberar estacionamiento y emitir ticket" ya no descarga un PDF: imprime **directo por red** en la impresora térmica del punto de cobro (Epson TM-T20IV-L), vía un servidor local ("print-bridge") que corre en la PC de la impresora y habla ESC/POS por el puerto 9100. Ver carpeta `print-bridge/` y `SISTEMA-DE-IMPRESION.md`.
+- El botón "Liberar estacionamiento y emitir ticket" ya no descarga un PDF: imprime **directo** en la impresora térmica del punto de cobro (Epson TM-T20IV-L, conectada por USB a la misma PC de la sala de guías y compartida como impresora de Windows), vía un servidor local ("print-bridge") que corre en esa PC. Ver carpeta `print-bridge/` y `SISTEMA-DE-IMPRESION.md`.
 - Se imprimen **2 copias separadas** (corte de papel entre una y otra): "COPIA: GUÍA" y "COPIA: SHOPPING", cada una con el mismo contenido que antes tenía el PDF (guía, empresa, vehículo/chapa, N° de ticket, ingreso, salida, permanencia, monto acumulado) más el logo del shopping.
 - Nuevo: **código de barras real** (CODE128) del N° de ticket, impreso por la propia impresora (no como imagen).
-- Si el servidor de impresión no responde (PC apagada, servidor no iniciado, etc.): el estacionamiento igual queda liberado en la base, se muestra un aviso claro, y el botón cambia a "Reintentar impresión" sin volver a tocar el registro.
+- Si el servidor de impresión no responde (PC apagada, servidor no iniciado, impresora compartida no accesible, etc.): el estacionamiento igual queda liberado en la base, se muestra un aviso claro, y el botón cambia a "Reintentar impresión" sin volver a tocar el registro.
 - Nuevo botón **"🖨️ Reimprimir último ticket"** en "Visitas en curso", disponible por unas horas después de cada liberación, por si hace falta reimprimir más tarde.
 - La generación de PDF (`generarPdfLiberacion`) queda en el código sin usarse en este flujo, por si se necesita como referencia o respaldo a futuro.
-- `PRINTER_IP` en `print-bridge/print-server.js` queda como placeholder (`"PENDIENTE"`) hasta configurar la IP real de la impresora.
+- `print-server.js` manda los comandos ESC/POS a la impresora copiando un archivo binario directo a su ruta de impresora compartida por Windows en la misma PC (`\\192.168.58.11\guiaticket`), en vez de un socket TCP directo — la impresora es USB (no de red), así que este es el mecanismo que funciona.
+- Corregido: al reimprimir un ticket desde "🖨️ Reimprimir último ticket", la fecha de ingreso aparecía como "Invalid Date" y la permanencia como "NaN min" — el Timestamp de Firestore pierde su método `.toDate()` al guardarse y recuperarse de `localStorage` vía JSON. Ahora `formatearFechaHora` y `tiempoTranscurrido` reconocen también ese formato "aplanado" (nueva función `aFechaJS`).
+- En "Nuevo ingreso", la **hora de ingreso** ahora se carga a mano (junto al N° de ticket), en vez de tomarse automáticamente del momento en que se registra el formulario — útil cuando el guía entró un rato antes de que se cargue el ingreso en el sistema. Se precarga con la hora actual y se puede editar antes de guardar.
 
 ## v1.0 — 2026-07-18
 
