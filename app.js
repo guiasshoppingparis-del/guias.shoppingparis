@@ -268,7 +268,7 @@ function PanelInicio({ perfil }) {
       </div>
 
       <div className="ticket">
-        <div className="ticket-stub">v1.7</div>
+        <div className="ticket-stub">v1.8</div>
         <div className="ticket-perforation"></div>
         <div className="ticket-body">
           <h2 style={{ fontSize: 16, marginBottom: 6 }}>Versión estable</h2>
@@ -2632,7 +2632,7 @@ function RankingView({ perfil }) {
     const porGuia = {};
     visitas.forEach((v) => {
       if (!porGuia[v.guiaId]) {
-        porGuia[v.guiaId] = { guiaId: v.guiaId, guiaNombre: v.guiaNombre, pasajeros: 0, visitas: 0, monto: 0 };
+        porGuia[v.guiaId] = { guiaId: v.guiaId, guiaNombre: v.guiaNombre, empresaNombre: v.empresaNombre || "", pasajeros: 0, visitas: 0, monto: 0 };
       }
       porGuia[v.guiaId].pasajeros += Number(v.cantPasajeros) || 0;
       porGuia[v.guiaId].visitas += 1;
@@ -2700,6 +2700,7 @@ function RankingView({ perfil }) {
                   <tr>
                     <th></th>
                     <th>Guía</th>
+                    <th>Empresa</th>
                     <th>Pasajeros</th>
                     <th>Visitas</th>
                     <th>Compras</th>
@@ -2711,6 +2712,7 @@ function RankingView({ perfil }) {
                     <tr key={g.guiaId}>
                       <td style={{ fontSize: 18 }}>{medallas[i] || i + 1}</td>
                       <td>{g.guiaNombre}</td>
+                      <td>{g.empresaNombre}</td>
                       <td>{g.pasajeros}</td>
                       <td>{g.visitas}</td>
                       <td>$ {g.monto.toLocaleString("es-AR")}</td>
@@ -3090,6 +3092,21 @@ function Shell({ perfil }) {
   const [toast, setToast] = useState("");
   const [online, setOnline] = useState(navigator.onLine);
   const [logoUrl, setLogoUrl] = useState(null);
+  const [sidebarColapsado, setSidebarColapsado] = useState(() => {
+    try {
+      return localStorage.getItem("spx_sidebarColapsado") === "true";
+    } catch (err) {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("spx_sidebarColapsado", String(sidebarColapsado));
+    } catch (err) {
+      // localStorage puede fallar en modo incógnito estricto; no es crítico.
+    }
+  }, [sidebarColapsado]);
 
   useEffect(() => {
     const on = () => setOnline(true);
@@ -3164,7 +3181,7 @@ function Shell({ perfil }) {
   }
 
   return (
-    <div className="shell">
+    <div className={`shell ${sidebarColapsado ? "sidebar-colapsado" : ""}`}>
       <aside className="sidebar">
         <div className="brand">
           {logoUrl ? (
@@ -3176,6 +3193,14 @@ function Shell({ perfil }) {
             <div className="brand-title">Shopping Paris</div>
             <div className="brand-sub">Sala de Guías</div>
           </div>
+          <button
+            className="sidebar-toggle"
+            onClick={() => setSidebarColapsado((v) => !v)}
+            title={sidebarColapsado ? "Expandir menú" : "Replegar menú"}
+            aria-label="Alternar menú"
+          >
+            {sidebarColapsado ? "»" : "«"}
+          </button>
         </div>
 
         <nav className="nav">
@@ -3184,9 +3209,11 @@ function Shell({ perfil }) {
               key={item.id}
               className={`nav-item ${vista === item.id ? "active" : ""}`}
               onClick={() => setVista(item.id)}
+              title={item.label}
             >
+              <span className="nav-icon">{item.icon}</span>
               <span className="dot"></span>
-              {item.label}
+              <span className="nav-label">{item.label}</span>
             </button>
           ))}
         </nav>
@@ -3199,8 +3226,12 @@ function Shell({ perfil }) {
               <div className="user-role">{perfil.rolNombre}</div>
             </div>
           </div>
-          <button className="link-muted" onClick={() => auth.signOut()}>Cerrar sesión</button>
-          <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.7</div>
+          <button className="link-muted" onClick={() => auth.signOut()} title="Cerrar sesión">
+            {sidebarColapsado ? "⏻" : "Cerrar sesión"}
+          </button>
+          {!sidebarColapsado && (
+            <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.8</div>
+          )}
         </div>
       </aside>
 

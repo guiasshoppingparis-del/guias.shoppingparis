@@ -2,6 +2,13 @@
 
 Versionado simplificado `vMAJOR.MINOR`. MAJOR = cambios de arquitectura o que rompen datos existentes. MINOR = funcionalidad nueva incremental.
 
+## v1.8 — 2026-08-25
+
+Menú lateral replegable + columna Empresa en el Ranking.
+
+- Nuevo botón (« / ») en la parte superior del menú lateral para replegarlo a una barra angosta de solo íconos (usa los íconos que ya tenía definidos cada sección, antes sin usar) o volver a expandirlo. La preferencia se recuerda entre sesiones (`localStorage`).
+- La tabla de "Ranking de guías" ahora incluye la columna **Empresa**, igual que ya se mostraba en el reporte de "Vehículos ingresados".
+
 ## v1.7 — 2026-08-25
 
 Ajuste de tamaño del modal de reportes detallados.

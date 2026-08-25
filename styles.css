@@ -227,6 +227,11 @@ a:focus-visible {
   display: grid;
   grid-template-columns: 240px 1fr;
   min-height: 100%;
+  transition: grid-template-columns 0.2s ease;
+}
+
+.shell.sidebar-colapsado {
+  grid-template-columns: 72px 1fr;
 }
 
 .sidebar {
@@ -235,6 +240,11 @@ a:focus-visible {
   padding: 24px 16px;
   display: flex;
   flex-direction: column;
+  transition: padding 0.2s ease;
+}
+
+.shell.sidebar-colapsado .sidebar {
+  padding: 24px 10px;
 }
 
 .brand {
@@ -244,6 +254,41 @@ a:focus-visible {
   padding: 0 8px 24px;
   border-bottom: 1px solid rgba(240, 238, 232, 0.12);
   margin-bottom: 20px;
+}
+
+.shell.sidebar-colapsado .brand {
+  justify-content: center;
+  padding: 0 0 24px;
+  gap: 6px;
+}
+
+.shell.sidebar-colapsado .brand-text {
+  display: none;
+}
+
+.sidebar-toggle {
+  background: rgba(240, 238, 232, 0.08);
+  border: none;
+  color: rgba(240, 238, 232, 0.75);
+  cursor: pointer;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  font-size: 13px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+}
+
+.shell.sidebar-colapsado .sidebar-toggle {
+  margin-left: 0;
+}
+
+.sidebar-toggle:hover {
+  background: rgba(240, 238, 232, 0.16);
+  color: #fff;
 }
 
 .brand-logo {
@@ -326,10 +371,38 @@ a:focus-visible {
   opacity: 1;
 }
 
+.nav-icon {
+  display: none;
+  width: 18px;
+  text-align: center;
+  flex-shrink: 0;
+  font-size: 15px;
+}
+
+.shell.sidebar-colapsado .nav-item {
+  justify-content: center;
+  padding: 10px 6px;
+}
+
+.shell.sidebar-colapsado .nav-icon {
+  display: inline-block;
+}
+
+.shell.sidebar-colapsado .dot,
+.shell.sidebar-colapsado .nav-label {
+  display: none;
+}
+
 .sidebar-footer {
   border-top: 1px solid rgba(240, 238, 232, 0.12);
   padding-top: 16px;
   margin-top: 16px;
+}
+
+.shell.sidebar-colapsado .sidebar-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 
 .user-chip {
@@ -337,6 +410,14 @@ a:focus-visible {
   align-items: center;
   gap: 10px;
   margin-bottom: 10px;
+}
+
+.shell.sidebar-colapsado .user-chip {
+  margin-bottom: 6px;
+}
+
+.shell.sidebar-colapsado .user-info {
+  display: none;
 }
 
 .user-avatar {
