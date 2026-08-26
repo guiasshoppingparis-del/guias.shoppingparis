@@ -2,6 +2,15 @@
 
 Versionado simplificado `vMAJOR.MINOR`. MAJOR = cambios de arquitectura o que rompen datos existentes. MINOR = funcionalidad nueva incremental.
 
+## v1.10 — 2026-08-25
+
+Numeración secuencial en liberaciones y permisos de salida, sin código de barras.
+
+- **Liberaciones**: cada ticket impreso ahora incluye un **N° de Liberación** correlativo (000001, 000002, ...), asignado con un contador atómico en Firestore (colección `contadores`, documento `liberaciones`) — nunca se repite ni salta, incluso si dos operadores liberan casi al mismo tiempo. El número se guarda en el registro de la visita (`numeroLiberacion`) y se conserva correctamente al reimprimir desde "🖨️ Reimprimir último ticket".
+- **Permisos de salida**: mismo mecanismo, con un contador independiente (documento `permisosSalida`) y un **N° de Permiso** propio en el ticket.
+- Se **quitó el código de barras** de ambos tickets (liberación y permiso de salida) — queda solo el N° de ticket de estacionamiento en texto.
+- El comprobante de liberación ahora también incluye, al final, un espacio para la **firma del operador** que emite el ticket (el permiso de salida ya tenía las firmas de guía y autorizante local).
+
 ## v1.9 — 2026-08-25
 
 Totales al pie de los reportes detallados.

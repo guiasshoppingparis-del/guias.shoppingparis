@@ -268,7 +268,7 @@ function PanelInicio({ perfil }) {
       </div>
 
       <div className="ticket">
-        <div className="ticket-stub">v1.9</div>
+        <div className="ticket-stub">v1.10</div>
         <div className="ticket-perforation"></div>
         <div className="ticket-body">
           <h2 style={{ fontSize: 16, marginBottom: 6 }}>Versión estable</h2>
@@ -704,7 +704,12 @@ function VisitasView({ perfil, mostrarToast }) {
   async function reimprimirUltimoTicket() {
     if (!ultimoTicket) return;
     setReimprimiendo(true);
-    const ok = await imprimirComprobanteLiberacion(ultimoTicket.visita, ultimoTicket.usuarioNombre);
+    const ok = await imprimirComprobanteLiberacion(
+      ultimoTicket.visita,
+      ultimoTicket.usuarioNombre,
+      ultimoTicket.visita.liberadoComoPartner,
+      ultimoTicket.visita.numeroLiberacion
+    );
     setReimprimiendo(false);
     mostrarToast(
       ok
@@ -1281,6 +1286,7 @@ function ModalPermisoSalida({ visita, perfil, onClose, mostrarToast }) {
   const [yaOtorgado, setYaOtorgado] = useState(false);
   const [motivosGuardados, setMotivosGuardados] = useState(null);
   const [autorizanteGuardado, setAutorizanteGuardado] = useState("");
+  const [numeroPermiso, setNumeroPermiso] = useState(null);
 
   function toggleMotivo(m) {
     setSeleccionados((prev) => ({ ...prev, [m]: !prev[m] }));
@@ -1303,16 +1309,23 @@ function ModalPermisoSalida({ visita, perfil, onClose, mostrarToast }) {
     }
 
     setCargando(true);
+    let numero;
     try {
-      await db.collection("visitas").doc(visita.id).update({
-        permisoSalida: true,
-        permisoSalidaPor: perfil.nombre,
-        permisoSalidaFecha: firebase.firestore.FieldValue.serverTimestamp(),
-        motivosSalida: motivosFinal,
-        autorizadoPorLocal: autorizadoPorLocal.trim()
-      });
+      numero = await asignarNumeroSecuencial(
+        "permisosSalida",
+        db.collection("visitas").doc(visita.id),
+        "numeroPermiso",
+        {
+          permisoSalida: true,
+          permisoSalidaPor: perfil.nombre,
+          permisoSalidaFecha: firebase.firestore.FieldValue.serverTimestamp(),
+          motivosSalida: motivosFinal,
+          autorizadoPorLocal: autorizadoPorLocal.trim()
+        }
+      );
       setMotivosGuardados(motivosFinal);
       setAutorizanteGuardado(autorizadoPorLocal.trim());
+      setNumeroPermiso(numero);
       setYaOtorgado(true);
     } catch (err) {
       console.error(err);
@@ -1320,17 +1333,18 @@ function ModalPermisoSalida({ visita, perfil, onClose, mostrarToast }) {
       setCargando(false);
       return;
     }
-    await intentarImprimir(motivosFinal, autorizadoPorLocal.trim());
+    await intentarImprimir(motivosFinal, autorizadoPorLocal.trim(), numero);
   }
 
-  async function intentarImprimir(motivos, autorizante) {
+  async function intentarImprimir(motivos, autorizante, numeroParam) {
     setCargando(true);
     setError("");
     const ok = await imprimirPermisoSalida(
       visita,
       perfil.nombre,
       motivos || motivosGuardados,
-      autorizante || autorizanteGuardado
+      autorizante || autorizanteGuardado,
+      numeroParam || numeroPermiso
     );
     if (ok) {
       mostrarToast("Permiso de salida otorgado.");
@@ -1493,6 +1507,30 @@ async function generarPdfLiberacion(visita, usuarioNombre) {
 }
 
 // ---------------------------------------------------------------------------
+// Numeración secuencial (liberaciones y permisos de salida)
+// ---------------------------------------------------------------------------
+// Cada tipo de documento tiene su propio contador en Firestore
+// (colección "contadores", documentos "liberaciones" / "permisosSalida").
+// Se incrementa de forma atómica junto con el guardado del documento
+// principal, todo dentro de la misma transacción — así nunca se repite un
+// número ni se pierde uno aunque dos operadores actúen casi al mismo tiempo.
+async function asignarNumeroSecuencial(contadorId, docRef, campoNumero, camposExtra) {
+  const contadorRef = db.collection("contadores").doc(contadorId);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(contadorRef);
+    const actual = snap.exists ? Number(snap.data().ultimo) || 0 : 0;
+    const siguiente = actual + 1;
+    tx.set(contadorRef, { ultimo: siguiente }, { merge: true });
+    tx.update(docRef, { ...camposExtra, [campoNumero]: siguiente });
+    return siguiente;
+  });
+}
+
+function formatearNumeroSecuencial(n) {
+  return String(n).padStart(6, "0");
+}
+
+// ---------------------------------------------------------------------------
 // Impresión directa del comprobante de liberación (impresora térmica de red)
 // ---------------------------------------------------------------------------
 // En vez de descargar un PDF, el ticket sale directo por la impresora térmica
@@ -1530,17 +1568,19 @@ function filaComprobante(etiqueta, valor) {
   ];
 }
 
-function construirLineasComprobante(visita, usuarioNombre, rotulo, partner) {
+function construirLineasComprobante(visita, usuarioNombre, rotulo, partner, numeroLiberacion) {
   const L = [];
   if (rotulo) L.push({ text: rotulo, bold: true, align: "center" });
   L.push({ text: "SHOPPING PARIS", bold: true, big: true, align: "center" });
   L.push({ text: "Comprobante de liberacion de estacionamiento", align: "center" });
   L.push({ text: "--------------------------------", align: "center" });
+  if (numeroLiberacion) {
+    L.push({ text: `N Liberacion: ${formatearNumeroSecuencial(numeroLiberacion)}`, bold: true, align: "center" });
+  }
   L.push(...filaComprobante("Guia", visita.guiaNombre));
   L.push(...filaComprobante("Empresa", visita.empresaNombre));
   L.push(...filaComprobante("Vehiculo / Chapa", `${visita.vehiculoTipoNombre} - ${visita.chapa}`));
   L.push(...filaComprobante("N Ticket de estacionamiento", visita.ticketEstacionamiento));
-  L.push({ barcode: String(visita.ticketEstacionamiento), align: "center" });
   L.push(...filaComprobante("Ingreso", formatearFechaHora(visita.fechaHoraIngreso)));
   L.push(...filaComprobante("Salida", formatearFechaHora(visita.fechaHoraSalida || new Date())));
   L.push(...filaComprobante("Tiempo de permanencia", tiempoTranscurrido(visita.fechaHoraIngreso)));
@@ -1552,6 +1592,11 @@ function construirLineasComprobante(visita, usuarioNombre, rotulo, partner) {
   L.push({ text: "--------------------------------", align: "center" });
   L.push({ text: `Liberado por: ${usuarioNombre}` });
   L.push({ text: `Emitido: ${new Date().toLocaleString("es-PY")}` });
+  // Espacio para que el operador firme a mano sobre el papel.
+  L.push({ text: " " });
+  L.push({ text: " " });
+  L.push({ text: "Firma del operador:" });
+  L.push({ text: "________________________" });
   return L;
 }
 
@@ -1564,16 +1609,16 @@ async function obtenerLogoBase64ParaTicket() {
 // Imprime las 2 copias del comprobante (una para el guía, una para el shopping),
 // cada una como un ticket separado (corta papel entre una y otra). "partner"
 // indica que se liberó sin exigir el monto mínimo (tienda Partner del shopping).
-async function imprimirComprobanteLiberacion(visita, usuarioNombre, partner) {
+async function imprimirComprobanteLiberacion(visita, usuarioNombre, partner, numeroLiberacion) {
   const logo = await obtenerLogoBase64ParaTicket();
   const okGuia = await imprimirDirecto({
-    lines: construirLineasComprobante(visita, usuarioNombre, "COPIA: GUÍA", partner),
+    lines: construirLineasComprobante(visita, usuarioNombre, "COPIA: GUÍA", partner, numeroLiberacion),
     logo,
     cortar: true
   });
   if (!okGuia) return false;
   const okShopping = await imprimirDirecto({
-    lines: construirLineasComprobante(visita, usuarioNombre, "COPIA: SHOPPING", partner),
+    lines: construirLineasComprobante(visita, usuarioNombre, "COPIA: SHOPPING", partner, numeroLiberacion),
     logo,
     cortar: true
   });
@@ -1584,17 +1629,19 @@ async function imprimirComprobanteLiberacion(visita, usuarioNombre, partner) {
 // Impresión directa del permiso de salida (misma impresora térmica)
 // ---------------------------------------------------------------------------
 
-function construirLineasPermisoSalida(visita, usuarioNombre, motivos, autorizadoPorLocal, rotulo) {
+function construirLineasPermisoSalida(visita, usuarioNombre, motivos, autorizadoPorLocal, rotulo, numeroPermiso) {
   const L = [];
   if (rotulo) L.push({ text: rotulo, bold: true, align: "center" });
   L.push({ text: "SHOPPING PARIS", bold: true, big: true, align: "center" });
   L.push({ text: "Permiso de salida de estacionamiento", align: "center" });
   L.push({ text: "--------------------------------", align: "center" });
+  if (numeroPermiso) {
+    L.push({ text: `N Permiso: ${formatearNumeroSecuencial(numeroPermiso)}`, bold: true, align: "center" });
+  }
   L.push(...filaComprobante("Guia", visita.guiaNombre));
   L.push(...filaComprobante("Empresa", visita.empresaNombre));
   L.push(...filaComprobante("Vehiculo / Chapa", `${visita.vehiculoTipoNombre} - ${visita.chapa}`));
   L.push(...filaComprobante("N Ticket de estacionamiento", visita.ticketEstacionamiento));
-  L.push({ barcode: String(visita.ticketEstacionamiento), align: "center" });
   L.push(...filaComprobante("Motivo de la salida", (motivos || []).join(" / ") || "-"));
   L.push(...filaComprobante("Autorizado por local", (autorizadoPorLocal || "-").toUpperCase()));
   L.push({ text: "--------------------------------", align: "center" });
@@ -1615,16 +1662,16 @@ function construirLineasPermisoSalida(visita, usuarioNombre, motivos, autorizado
 
 // Imprime las 2 copias del permiso de salida (una para el guía, una para el
 // local), cada una como un ticket separado.
-async function imprimirPermisoSalida(visita, usuarioNombre, motivos, autorizadoPorLocal) {
+async function imprimirPermisoSalida(visita, usuarioNombre, motivos, autorizadoPorLocal, numeroPermiso) {
   const logo = await obtenerLogoBase64ParaTicket();
   const okGuia = await imprimirDirecto({
-    lines: construirLineasPermisoSalida(visita, usuarioNombre, motivos, autorizadoPorLocal, "COPIA: GUÍA"),
+    lines: construirLineasPermisoSalida(visita, usuarioNombre, motivos, autorizadoPorLocal, "COPIA: GUÍA", numeroPermiso),
     logo,
     cortar: true
   });
   if (!okGuia) return false;
   const okLocal = await imprimirDirecto({
-    lines: construirLineasPermisoSalida(visita, usuarioNombre, motivos, autorizadoPorLocal, "COPIA: LOCAL"),
+    lines: construirLineasPermisoSalida(visita, usuarioNombre, motivos, autorizadoPorLocal, "COPIA: LOCAL", numeroPermiso),
     logo,
     cortar: true
   });
@@ -1691,18 +1738,26 @@ function ModalLiberarVisita({ visita, perfil, modoPartner, onClose, mostrarToast
   // Cuando la impresión falla pero el estacionamiento ya quedó liberado en la
   // base, no hay que reintentar el paso de Firestore — solo la impresión.
   const [yaLiberado, setYaLiberado] = useState(false);
+  const [numeroLiberacion, setNumeroLiberacion] = useState(null);
 
   async function liberar() {
     setCargando(true);
     setError("");
+    let numero;
     try {
-      await db.collection("visitas").doc(visita.id).update({
-        estado: "liberado",
-        fechaHoraSalida: firebase.firestore.FieldValue.serverTimestamp(),
-        usuarioSalidaId: perfil.id,
-        usuarioSalidaNombre: perfil.nombre,
-        liberadoComoPartner: !!modoPartner
-      });
+      numero = await asignarNumeroSecuencial(
+        "liberaciones",
+        db.collection("visitas").doc(visita.id),
+        "numeroLiberacion",
+        {
+          estado: "liberado",
+          fechaHoraSalida: firebase.firestore.FieldValue.serverTimestamp(),
+          usuarioSalidaId: perfil.id,
+          usuarioSalidaNombre: perfil.nombre,
+          liberadoComoPartner: !!modoPartner
+        }
+      );
+      setNumeroLiberacion(numero);
       setYaLiberado(true);
     } catch (err) {
       console.error(err);
@@ -1710,15 +1765,16 @@ function ModalLiberarVisita({ visita, perfil, modoPartner, onClose, mostrarToast
       setCargando(false);
       return;
     }
-    await intentarImprimir();
+    await intentarImprimir(numero);
   }
 
-  async function intentarImprimir() {
+  async function intentarImprimir(numeroParam) {
+    const numero = numeroParam || numeroLiberacion;
     setCargando(true);
     setError("");
-    const ok = await imprimirComprobanteLiberacion(visita, perfil.nombre, modoPartner);
+    const ok = await imprimirComprobanteLiberacion(visita, perfil.nombre, modoPartner, numero);
     if (ok) {
-      guardarUltimoTicketLiberado(visita, perfil.nombre);
+      guardarUltimoTicketLiberado({ ...visita, numeroLiberacion: numero, liberadoComoPartner: !!modoPartner }, perfil.nombre);
       mostrarToast(`Estacionamiento liberado: ${visita.guiaNombre}`);
       setCargando(false);
       onClose();
@@ -1804,7 +1860,7 @@ function ModalLiberarVisita({ visita, perfil, modoPartner, onClose, mostrarToast
       <button
         className="btn btn-primary"
         disabled={(!alcanzado && !yaLiberado) || cargando}
-        onClick={yaLiberado ? intentarImprimir : liberar}
+        onClick={yaLiberado ? () => intentarImprimir() : liberar}
       >
         {cargando
           ? "Procesando..."
@@ -3309,7 +3365,7 @@ function Shell({ perfil }) {
             {sidebarColapsado ? "⏻" : "Cerrar sesión"}
           </button>
           {!sidebarColapsado && (
-            <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.9</div>
+            <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.10</div>
           )}
         </div>
       </aside>
