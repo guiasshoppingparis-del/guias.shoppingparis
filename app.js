@@ -633,6 +633,7 @@ function VisitasView({ perfil, mostrarToast }) {
   const [visitaSeleccionada, setVisitaSeleccionada] = useState(null);
   const [mostrarCierreDia, setMostrarCierreDia] = useState(false);
   const [visitaParaReingreso, setVisitaParaReingreso] = useState(null);
+  const [visitaParaEditar, setVisitaParaEditar] = useState(null);
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
@@ -756,7 +757,19 @@ function VisitasView({ perfil, mostrarToast }) {
                   <div className="ticket-stub">{tiempoTranscurrido(v.fechaHoraIngreso)}</div>
                   <div className="ticket-perforation"></div>
                   <div className="ticket-body">
-                    <h3 style={{ fontSize: 16 }}>{v.guiaNombre}</h3>
+                    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+                      <h3 style={{ fontSize: 16 }}>{v.guiaNombre}</h3>
+                      {tienePermiso(perfil, "registrar_visitas") && (
+                        <button
+                          className="icon-btn"
+                          onClick={() => setVisitaParaEditar(v)}
+                          title="Editar datos de esta visita"
+                          style={{ flexShrink: 0 }}
+                        >
+                          ✎
+                        </button>
+                      )}
+                    </div>
                     {v.permisoSalida && (
                       <span className="badge badge-gold" style={{ marginBottom: 8 }}>🚗 Permiso de salida otorgado</span>
                     )}
@@ -847,6 +860,16 @@ function VisitasView({ perfil, mostrarToast }) {
           mostrarToast={mostrarToast}
         />
       )}
+
+      {visitaParaEditar && (
+        <ModalEditarVisita
+          visita={visitaParaEditar}
+          empresas={empresas}
+          tiposVehiculo={tiposVehiculo}
+          onClose={() => setVisitaParaEditar(null)}
+          mostrarToast={mostrarToast}
+        />
+      )}
     </div>
   );
 }
@@ -914,6 +937,115 @@ function ModalReingreso({ visita, onClose, mostrarToast }) {
             autoFocus
             required
           />
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Edición de una visita en curso (corregir datos cargados por error)
+// ---------------------------------------------------------------------------
+
+function ModalEditarVisita({ visita, empresas, tiposVehiculo, onClose, mostrarToast }) {
+  const [nombreGuia, setNombreGuia] = useState(visita.guiaNombre || "");
+  const [empresaId, setEmpresaId] = useState(visita.empresaId || "");
+  const [cantPasajeros, setCantPasajeros] = useState(visita.cantPasajeros || "");
+  const [vehiculoTipoId, setVehiculoTipoId] = useState(visita.vehiculoTipoId || "");
+  const [chapa, setChapa] = useState(visita.chapa || "");
+  const [ticket, setTicket] = useState(visita.ticketEstacionamiento || "");
+  const [cargando, setCargando] = useState(false);
+  const [error, setError] = useState("");
+
+  async function guardar(e) {
+    e.preventDefault();
+    if (!nombreGuia.trim() || !empresaId || !vehiculoTipoId || !chapa.trim() || !ticket.trim() || !cantPasajeros) {
+      setError("Completá todos los campos.");
+      return;
+    }
+    setError("");
+    setCargando(true);
+    try {
+      const empresa = empresas.find((e) => e.id === empresaId);
+      const tipoVehiculo = tiposVehiculo.find((t) => t.id === vehiculoTipoId);
+
+      await db.collection("visitas").doc(visita.id).update({
+        guiaNombre: nombreGuia.trim(),
+        empresaId,
+        empresaNombre: empresa ? empresa.nombre : "",
+        vehiculoTipoId,
+        vehiculoTipoNombre: tipoVehiculo ? tipoVehiculo.nombre : "",
+        montoMinimoRequerido: tipoVehiculo ? Number(tipoVehiculo.montoMinimoCompra) || 0 : 0,
+        chapa: chapa.trim().toUpperCase(),
+        cantPasajeros: Number(cantPasajeros),
+        ticketEstacionamiento: ticket.trim()
+      });
+      mostrarToast("Visita actualizada.");
+      onClose();
+    } catch (err) {
+      console.error(err);
+      setError("No se pudo guardar el cambio. Probá de nuevo.");
+    } finally {
+      setCargando(false);
+    }
+  }
+
+  return (
+    <Modal
+      titulo="Editar visita"
+      onClose={onClose}
+      footer={
+        <React.Fragment>
+          <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-gold" onClick={guardar} disabled={cargando}>
+            {cargando ? "Guardando..." : "Guardar cambios"}
+          </button>
+        </React.Fragment>
+      }
+    >
+      {error && <div className="form-error">{error}</div>}
+      <p style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 14 }}>
+        Si cambiás el tipo de vehículo, el monto mínimo requerido se recalcula; el monto
+        ya acumulado (compras registradas) no se toca.
+      </p>
+      <form onSubmit={guardar}>
+        <div className="field">
+          <label>Guía</label>
+          <input value={nombreGuia} onChange={(e) => setNombreGuia(e.target.value.toUpperCase())} required />
+        </div>
+        <div className="field-row">
+          <div className="field">
+            <label>Empresa</label>
+            <select value={empresaId} onChange={(e) => setEmpresaId(e.target.value)} required>
+              <option value="">Seleccionar…</option>
+              {empresas.map((emp) => (
+                <option key={emp.id} value={emp.id}>{emp.nombre}</option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label>Cantidad de pasajeros</label>
+            <input type="number" min="1" value={cantPasajeros} onChange={(e) => setCantPasajeros(e.target.value)} required />
+          </div>
+        </div>
+        <div className="field-row">
+          <div className="field">
+            <label>Tipo de vehículo</label>
+            <select value={vehiculoTipoId} onChange={(e) => setVehiculoTipoId(e.target.value)} required>
+              <option value="">Seleccionar…</option>
+              {tiposVehiculo.map((t) => (
+                <option key={t.id} value={t.id}>{t.nombre}</option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label>Chapa</label>
+            <input value={chapa} onChange={(e) => setChapa(e.target.value.toUpperCase())} required />
+          </div>
+        </div>
+        <div className="field">
+          <label>Ticket de estacionamiento</label>
+          <input value={ticket} onChange={(e) => setTicket(e.target.value.toUpperCase())} required />
         </div>
       </form>
     </Modal>
