@@ -268,7 +268,7 @@ function PanelInicio({ perfil }) {
       </div>
 
       <div className="ticket">
-        <div className="ticket-stub">v1.10</div>
+        <div className="ticket-stub">v1.11</div>
         <div className="ticket-perforation"></div>
         <div className="ticket-body">
           <h2 style={{ fontSize: 16, marginBottom: 6 }}>Versión estable</h2>
@@ -2937,6 +2937,32 @@ function ModalPesosFidelidad({ pesos, onGuardado, onClose }) {
 const DIAS_SEMANA = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
 const ORDEN_DIA_JS = [1, 2, 3, 4, 5, 6, 0]; // reordena getDay() (0=Dom) para empezar en lunes
 const HORAS_MAPA = Array.from({ length: 14 }, (_, i) => i + 8); // 8:00 a 21:00
+const MESES_LARGOS = [
+  "enero", "febrero", "marzo", "abril", "mayo", "junio",
+  "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"
+];
+
+// Arma la grilla de un mes calendario (semanas de lunes a domingo, con
+// celdas vacías al inicio/fin para completar la primera y última semana).
+// Cada celda marca si cae dentro del rango consultado ("enRango") para
+// pintarla distinto de los días del mes que quedaron fuera del período.
+function construirCalendarioMes(anio, mes, ingresosPorFecha, desdeDate, hastaDate) {
+  const primerDia = new Date(anio, mes, 1);
+  const ultimoDia = new Date(anio, mes + 1, 0);
+  const offsetInicio = (primerDia.getDay() + 6) % 7; // lunes=0 ... domingo=6
+  const celdas = [];
+  for (let i = 0; i < offsetInicio; i++) celdas.push(null);
+  for (let dia = 1; dia <= ultimoDia.getDate(); dia++) {
+    const fecha = new Date(anio, mes, dia);
+    const iso = fechaISO(fecha);
+    const enRango = fecha >= desdeDate && fecha <= hastaDate;
+    celdas.push({ dia, iso, valor: ingresosPorFecha[iso] || 0, enRango });
+  }
+  while (celdas.length % 7 !== 0) celdas.push(null);
+  const semanas = [];
+  for (let i = 0; i < celdas.length; i += 7) semanas.push(celdas.slice(i, i + 7));
+  return semanas;
+}
 
 function MapaCalorView() {
   const hoy = new Date();
@@ -3007,6 +3033,41 @@ function MapaCalorView() {
     fila.forEach((valor, j) => {
       if (!pico || valor > pico.valor) pico = { valor, dia: DIAS_SEMANA[i], hora: HORAS_MAPA[j] };
     });
+  });
+
+  // --- Afluencia por fecha exacta (calendario mensual) ---
+  const ingresosPorFecha = React.useMemo(() => {
+    const mapa = {};
+    visitas.forEach((v) => {
+      if (!v.fechaHoraIngreso) return;
+      const fecha = v.fechaHoraIngreso.toDate ? v.fechaHoraIngreso.toDate() : new Date(v.fechaHoraIngreso);
+      const iso = fechaISO(fecha);
+      mapa[iso] = (mapa[iso] || 0) + 1;
+    });
+    return mapa;
+  }, [visitas]);
+
+  const desdeDate = new Date(desde + "T00:00:00");
+  const hastaDate = new Date(hasta + "T00:00:00");
+
+  const mesesEnRango = React.useMemo(() => {
+    const meses = [];
+    let cursor = new Date(desdeDate.getFullYear(), desdeDate.getMonth(), 1);
+    const fin = new Date(hastaDate.getFullYear(), hastaDate.getMonth(), 1);
+    while (cursor <= fin) {
+      meses.push({ anio: cursor.getFullYear(), mes: cursor.getMonth() });
+      cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+    }
+    return meses;
+  }, [desde, hasta]);
+
+  const maximoPorDia = Math.max(1, ...Object.values(ingresosPorFecha));
+
+  let picoDia = null;
+  Object.entries(ingresosPorFecha).forEach(([iso, valor]) => {
+    const fecha = new Date(iso + "T00:00:00");
+    if (fecha < desdeDate || fecha > hastaDate) return;
+    if (!picoDia || valor > picoDia.valor) picoDia = { iso, valor };
   });
 
   return (
@@ -3106,6 +3167,81 @@ function MapaCalorView() {
                   ))}
                 </div>
                 <span>Mayor afluencia</span>
+              </div>
+            </div>
+          </div>
+
+          {picoDia && picoDia.valor > 0 && (
+            <div className="ticket" style={{ marginTop: 20, marginBottom: 20 }}>
+              <div className="ticket-stub">PICO</div>
+              <div className="ticket-perforation"></div>
+              <div className="ticket-body">
+                <h3 style={{ fontSize: 15 }}>Día de mayor afluencia</h3>
+                <p style={{ fontSize: 14, color: "var(--text-muted)", marginTop: 4 }}>
+                  {new Date(picoDia.iso + "T00:00:00").toLocaleDateString("es-PY", { weekday: "long", day: "numeric", month: "long" })}
+                  {" — "}{picoDia.valor} {picoDia.valor === 1 ? "ingreso" : "ingresos"}
+                </p>
+              </div>
+            </div>
+          )}
+
+          <div className="panel">
+            <div className="panel-body">
+              <h3 style={{ fontSize: 15, marginBottom: 4 }}>Afluencia por día</h3>
+              <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 18 }}>
+                Total de ingresos en cada fecha exacta del período consultado.
+              </p>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 28 }}>
+                {mesesEnRango.map(({ anio, mes }) => {
+                  const semanas = construirCalendarioMes(anio, mes, ingresosPorFecha, desdeDate, hastaDate);
+                  return (
+                    <div key={`${anio}-${mes}`}>
+                      <div style={{ fontWeight: 600, marginBottom: 8, textTransform: "capitalize", fontSize: 13 }}>
+                        {MESES_LARGOS[mes]} {anio}
+                      </div>
+                      <table style={{ borderCollapse: "collapse", fontSize: 11 }}>
+                        <thead>
+                          <tr>
+                            {DIAS_SEMANA.map((d) => (
+                              <th key={d} style={{ padding: "2px 4px", color: "var(--text-muted)", fontWeight: 600 }}>
+                                {d.charAt(0)}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {semanas.map((semana, si) => (
+                            <tr key={si}>
+                              {semana.map((celda, ci) => {
+                                if (!celda) return <td key={ci} style={{ padding: "6px 4px" }}></td>;
+                                const intensidad = celda.enRango
+                                  ? (celda.valor > 0 ? 0.12 + 0.8 * (celda.valor / maximoPorDia) : 0.05)
+                                  : 0.02;
+                                return (
+                                  <td
+                                    key={ci}
+                                    title={`${celda.iso} — ${celda.valor} ${celda.valor === 1 ? "ingreso" : "ingresos"}${celda.enRango ? "" : " (fuera del período consultado)"}`}
+                                    style={{
+                                      background: `rgba(184, 147, 95, ${intensidad})`,
+                                      color: celda.enRango ? (intensidad > 0.55 ? "#fff" : "var(--ink)") : "var(--text-muted)",
+                                      textAlign: "center",
+                                      padding: "6px 4px",
+                                      minWidth: 26,
+                                      borderRadius: 3,
+                                      opacity: celda.enRango ? 1 : 0.45
+                                    }}
+                                  >
+                                    {celda.dia}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -3365,7 +3501,7 @@ function Shell({ perfil }) {
             {sidebarColapsado ? "⏻" : "Cerrar sesión"}
           </button>
           {!sidebarColapsado && (
-            <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.10</div>
+            <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.11</div>
           )}
         </div>
       </aside>
