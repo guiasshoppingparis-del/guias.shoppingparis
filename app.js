@@ -194,10 +194,10 @@ function Login() {
 // Modal genérico
 // ---------------------------------------------------------------------------
 
-function Modal({ titulo, onClose, children, footer, ancho }) {
+function Modal({ titulo, onClose, children, footer }) {
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal" style={ancho ? { maxWidth: ancho } : undefined}>
+      <div className="modal">
         <div className="modal-header">
           <h2>{titulo}</h2>
           <button className="icon-btn" onClick={onClose} aria-label="Cerrar">✕</button>
@@ -268,7 +268,7 @@ function PanelInicio({ perfil }) {
       </div>
 
       <div className="ticket">
-        <div className="ticket-stub">v1.10</div>
+        <div className="ticket-stub">v1.0</div>
         <div className="ticket-perforation"></div>
         <div className="ticket-body">
           <h2 style={{ fontSize: 16, marginBottom: 6 }}>Versión estable</h2>
@@ -616,23 +616,9 @@ function ModalRol({ rol, onClose, mostrarToast }) {
 // Vista: Visitas (ingreso de guías a la sala)
 // ---------------------------------------------------------------------------
 
-// Convierte a un objeto Date de JS un valor de fecha que puede venir en 3
-// formatos distintos: un Timestamp de Firestore "vivo" (con método .toDate),
-// el mismo Timestamp ya "aplanado" a {seconds, nanoseconds} — que es lo que
-// queda después de un JSON.stringify/parse, como al guardar en localStorage
-// para la reimpresión — o un valor común (string, número, Date). Devuelve
-// null si no se puede interpretar.
-function aFechaJS(fecha) {
-  if (!fecha) return null;
-  if (typeof fecha.toDate === "function") return fecha.toDate();
-  if (typeof fecha.seconds === "number") return new Date(fecha.seconds * 1000);
-  const d = new Date(fecha);
-  return isNaN(d.getTime()) ? null : d;
-}
-
 function tiempoTranscurrido(fecha) {
-  const inicio = aFechaJS(fecha);
-  if (!inicio) return "—";
+  if (!fecha) return "—";
+  const inicio = fecha.toDate ? fecha.toDate() : new Date(fecha);
   const minutos = Math.max(0, Math.floor((Date.now() - inicio.getTime()) / 60000));
   const h = Math.floor(minutos / 60);
   const m = minutos % 60;
@@ -645,10 +631,8 @@ function VisitasView({ perfil, mostrarToast }) {
   const [tiposVehiculo, setTiposVehiculo] = useState([]);
   const [visitasEnCurso, setVisitasEnCurso] = useState([]);
   const [visitaSeleccionada, setVisitaSeleccionada] = useState(null);
-  const [visitaParaPermiso, setVisitaParaPermiso] = useState(null);
-  const [modoPartner, setModoPartner] = useState(false);
-  const [busquedaGuia, setBusquedaGuia] = useState("");
   const [mostrarCierreDia, setMostrarCierreDia] = useState(false);
+  const [visitaParaReingreso, setVisitaParaReingreso] = useState(null);
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
@@ -694,29 +678,6 @@ function VisitasView({ perfil, mostrarToast }) {
   }, []);
 
   const puedeLiberar = tienePermiso(perfil, "liberar_estacionamiento");
-  const [ultimoTicket, setUltimoTicket] = useState(null);
-  const [reimprimiendo, setReimprimiendo] = useState(false);
-
-  useEffect(() => {
-    setUltimoTicket(obtenerUltimoTicketLiberado());
-  }, []);
-
-  async function reimprimirUltimoTicket() {
-    if (!ultimoTicket) return;
-    setReimprimiendo(true);
-    const ok = await imprimirComprobanteLiberacion(
-      ultimoTicket.visita,
-      ultimoTicket.usuarioNombre,
-      ultimoTicket.visita.liberadoComoPartner,
-      ultimoTicket.visita.numeroLiberacion
-    );
-    setReimprimiendo(false);
-    mostrarToast(
-      ok
-        ? `Ticket reimpreso: ${ultimoTicket.visita.guiaNombre}`
-        : "No se pudo reimprimir. Revisá que el servidor de impresión esté encendido."
-    );
-  }
 
   async function anularVisita(v) {
     const confirmar = window.confirm(
@@ -732,27 +693,20 @@ function VisitasView({ perfil, mostrarToast }) {
     }
   }
 
-  // Otorgar el permiso ahora pasa por un modal (motivo + autorizante) antes de
-  // tocar Firestore y generar el PDF; acá solo queda la revocación directa.
-  async function revocarPermisoSalida(v) {
+  async function otorgarPermisoSalida(v) {
     try {
       await db.collection("visitas").doc(v.id).update({
-        permisoSalida: false,
-        permisoSalidaPor: firebase.firestore.FieldValue.delete(),
-        permisoSalidaFecha: firebase.firestore.FieldValue.delete(),
-        motivosSalida: firebase.firestore.FieldValue.delete(),
-        autorizadoPorLocal: firebase.firestore.FieldValue.delete()
+        permisoSalida: true,
+        permisoSalidaPor: perfil.nombre,
+        permisoSalidaFecha: firebase.firestore.FieldValue.serverTimestamp()
       });
-      mostrarToast("Permiso de salida retirado.");
+      await generarPdfPermisoSalida(v, perfil.nombre);
+      mostrarToast("Permiso de salida otorgado.");
     } catch (err) {
       console.error(err);
-      mostrarToast("No se pudo actualizar el permiso de salida.");
+      mostrarToast("No se pudo otorgar el permiso de salida.");
     }
   }
-
-  const visitasFiltradas = busquedaGuia.trim()
-    ? visitasEnCurso.filter((v) => (v.guiaNombre || "").toLowerCase().includes(busquedaGuia.trim().toLowerCase()))
-    : visitasEnCurso;
 
   return (
     <div>
@@ -773,27 +727,10 @@ function VisitasView({ perfil, mostrarToast }) {
       />
 
       <div style={{ marginTop: 32 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 14, flexWrap: "wrap" }}>
-          <h2 style={{ fontSize: 18, whiteSpace: "nowrap" }}>Visitas en curso</h2>
-          <input
-            type="text"
-            value={busquedaGuia}
-            onChange={(e) => setBusquedaGuia(e.target.value)}
-            placeholder="Buscar por nombre de guía..."
-            style={{ flex: "1 1 240px", maxWidth: 420, padding: "8px 12px", border: "1px solid var(--line)", borderRadius: 8 }}
-          />
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginLeft: "auto" }}>
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 14 }}>
+          <h2 style={{ fontSize: 18 }}>Visitas en curso</h2>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <span className="badge badge-gold">{visitasEnCurso.length}</span>
-            {puedeLiberar && ultimoTicket && (
-              <button
-                className="btn btn-ghost"
-                onClick={reimprimirUltimoTicket}
-                disabled={reimprimiendo}
-                title={`Último ticket liberado: ${ultimoTicket.visita.guiaNombre}`}
-              >
-                {reimprimiendo ? "Imprimiendo..." : "🖨️ Reimprimir último ticket"}
-              </button>
-            )}
             {tienePermiso(perfil, "registrar_visitas") && visitasEnCurso.length > 0 && (
               <button className="btn btn-ghost" onClick={() => setMostrarCierreDia(true)}>Cerrar día</button>
             )}
@@ -807,16 +744,9 @@ function VisitasView({ perfil, mostrarToast }) {
               <p>Los ingresos que registres van a aparecer acá.</p>
             </div>
           </div>
-        ) : visitasFiltradas.length === 0 ? (
-          <div className="panel">
-            <div className="empty-state">
-              <div className="display">Sin resultados</div>
-              <p>No hay ningún guía en curso que coincida con "{busquedaGuia}".</p>
-            </div>
-          </div>
         ) : (
           <div className="ticket-grid">
-            {visitasFiltradas.map((v) => {
+            {visitasEnCurso.map((v) => {
               const porcentaje = v.montoMinimoRequerido > 0
                 ? Math.min(100, Math.round((v.montoAcumulado / v.montoMinimoRequerido) * 100))
                 : 0;
@@ -858,47 +788,29 @@ function VisitasView({ perfil, mostrarToast }) {
                       <button
                         className="btn btn-ghost"
                         style={{ width: "100%", marginTop: 12 }}
-                        onClick={() => (v.permisoSalida ? revocarPermisoSalida(v) : setVisitaParaPermiso(v))}
+                        onClick={() => (v.permisoSalida ? setVisitaParaReingreso(v) : otorgarPermisoSalida(v))}
                       >
-                        {v.permisoSalida ? "Quitar permiso de salida" : "Otorgar permiso de salida"}
-                      </button>
-                    )}
-
-                    {puedeLiberar && (
-                      <button
-                        className="btn btn-gold"
-                        style={{ width: "100%", marginTop: 8 }}
-                        onClick={() => {
-                          setModoPartner(false);
-                          setVisitaSeleccionada(v);
-                        }}
-                      >
-                        {alcanzado ? "Liberar estacionamiento" : "Registrar compra"}
+                        {v.permisoSalida ? "Registrar reingreso (quitar permiso)" : "Otorgar permiso de salida"}
                       </button>
                     )}
 
                     <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                      {puedeLiberar && !alcanzado && (
+                      {puedeLiberar && (
                         <button
-                          className="btn btn-ghost"
+                          className="btn btn-gold"
                           style={{ flex: 1 }}
-                          onClick={() => {
-                            setModoPartner(true);
-                            setVisitaSeleccionada(v);
-                          }}
-                          title="Liberar sin monto mínimo — solo para tiendas Partner del shopping"
+                          onClick={() => setVisitaSeleccionada(v)}
                         >
-                          Partner
+                          {alcanzado ? "Liberar estacionamiento" : "Registrar compra"}
                         </button>
                       )}
                       {tienePermiso(perfil, "registrar_visitas") && (
                         <button
                           className="btn btn-danger"
-                          style={!alcanzado ? undefined : { marginLeft: "auto" }}
                           onClick={() => anularVisita(v)}
                           title="Anular esta visita (se cargó por error)"
                         >
-                          ✕ Anular visita
+                          ✕
                         </button>
                       )}
                     </div>
@@ -914,21 +826,7 @@ function VisitasView({ perfil, mostrarToast }) {
         <ModalLiberarVisita
           visita={visitaSeleccionada}
           perfil={perfil}
-          modoPartner={modoPartner}
-          onClose={() => {
-            setVisitaSeleccionada(null);
-            setModoPartner(false);
-            setUltimoTicket(obtenerUltimoTicketLiberado());
-          }}
-          mostrarToast={mostrarToast}
-        />
-      )}
-
-      {visitaParaPermiso && (
-        <ModalPermisoSalida
-          visita={visitaParaPermiso}
-          perfil={perfil}
-          onClose={() => setVisitaParaPermiso(null)}
+          onClose={() => setVisitaSeleccionada(null)}
           mostrarToast={mostrarToast}
         />
       )}
@@ -941,13 +839,85 @@ function VisitasView({ perfil, mostrarToast }) {
           mostrarToast={mostrarToast}
         />
       )}
+
+      {visitaParaReingreso && (
+        <ModalReingreso
+          visita={visitaParaReingreso}
+          onClose={() => setVisitaParaReingreso(null)}
+          mostrarToast={mostrarToast}
+        />
+      )}
     </div>
   );
 }
 
-function horaActualHHMM() {
-  const d = new Date();
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+// ---------------------------------------------------------------------------
+// Reingreso tras un permiso de salida: pide el nuevo N° de ticket
+// ---------------------------------------------------------------------------
+
+function ModalReingreso({ visita, onClose, mostrarToast }) {
+  const [nuevoTicket, setNuevoTicket] = useState("");
+  const [cargando, setCargando] = useState(false);
+  const [error, setError] = useState("");
+
+  async function confirmar(e) {
+    e.preventDefault();
+    if (!nuevoTicket.trim()) {
+      setError("Ingresá el número de ticket que le dieron al guía al volver a entrar.");
+      return;
+    }
+    setError("");
+    setCargando(true);
+    try {
+      await db.collection("visitas").doc(visita.id).update({
+        ticketEstacionamiento: nuevoTicket.trim(),
+        permisoSalida: false,
+        permisoSalidaPor: firebase.firestore.FieldValue.delete(),
+        permisoSalidaFecha: firebase.firestore.FieldValue.delete()
+      });
+      mostrarToast("Reingreso registrado con el nuevo ticket.");
+      onClose();
+    } catch (err) {
+      console.error(err);
+      setError("No se pudo registrar el reingreso. Probá de nuevo.");
+    } finally {
+      setCargando(false);
+    }
+  }
+
+  return (
+    <Modal
+      titulo={`Reingreso — ${visita.guiaNombre}`}
+      onClose={onClose}
+      footer={
+        <React.Fragment>
+          <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-gold" onClick={confirmar} disabled={cargando}>
+            {cargando ? "Guardando..." : "Confirmar reingreso"}
+          </button>
+        </React.Fragment>
+      }
+    >
+      {error && <div className="form-error">{error}</div>}
+      <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 16 }}>
+        El guía salió con permiso y volvió a entrar con un ticket de estacionamiento
+        nuevo. Cargá ese número para reemplazar el anterior
+        (<strong>{visita.ticketEstacionamiento}</strong>) en esta visita.
+      </p>
+      <form onSubmit={confirmar}>
+        <div className="field">
+          <label>Nuevo N° de ticket de estacionamiento</label>
+          <input
+            value={nuevoTicket}
+            onChange={(e) => setNuevoTicket(e.target.value.toUpperCase())}
+            placeholder="Número impreso en el ticket"
+            autoFocus
+            required
+          />
+        </div>
+      </form>
+    </Modal>
+  );
 }
 
 function FormularioVisita({ guias, empresas, tiposVehiculo, perfil, mostrarToast }) {
@@ -959,7 +929,6 @@ function FormularioVisita({ guias, empresas, tiposVehiculo, perfil, mostrarToast
   const [vehiculoTipoId, setVehiculoTipoId] = useState("");
   const [chapa, setChapa] = useState("");
   const [ticket, setTicket] = useState("");
-  const [horaIngreso, setHoraIngreso] = useState(horaActualHHMM());
   const [error, setError] = useState("");
   const [cargando, setCargando] = useState(false);
 
@@ -988,13 +957,12 @@ function FormularioVisita({ guias, empresas, tiposVehiculo, perfil, mostrarToast
     setVehiculoTipoId("");
     setChapa("");
     setTicket("");
-    setHoraIngreso(horaActualHHMM());
   }
 
   async function registrarIngreso(e) {
     e.preventDefault();
     setError("");
-    if (!nombreGuia.trim() || !empresaId || !vehiculoTipoId || !chapa.trim() || !ticket.trim() || !cantPasajeros || !horaIngreso) {
+    if (!nombreGuia.trim() || !empresaId || !vehiculoTipoId || !chapa.trim() || !ticket.trim() || !cantPasajeros) {
       setError("Completá todos los campos para registrar el ingreso.");
       return;
     }
@@ -1012,14 +980,6 @@ function FormularioVisita({ guias, empresas, tiposVehiculo, perfil, mostrarToast
       const empresa = empresas.find((e) => e.id === empresaId);
       const tipoVehiculo = tiposVehiculo.find((t) => t.id === vehiculoTipoId);
 
-      // La hora de ingreso se carga a mano (el guía puede haber entrado un
-      // rato antes de que se registre en el sistema), tomando como fecha
-      // "hoy" — combinamos la hora elegida con la fecha del momento en que
-      // se está cargando el formulario.
-      const [hh, mm] = horaIngreso.split(":").map(Number);
-      const fechaHoraIngreso = new Date();
-      fechaHoraIngreso.setHours(hh, mm, 0, 0);
-
       await db.collection("visitas").add({
         guiaId,
         guiaNombre: nombreGuia.trim(),
@@ -1033,7 +993,7 @@ function FormularioVisita({ guias, empresas, tiposVehiculo, perfil, mostrarToast
         ticketEstacionamiento: ticket.trim(),
         estado: "en_curso",
         montoAcumulado: 0,
-        fechaHoraIngreso: firebase.firestore.Timestamp.fromDate(fechaHoraIngreso),
+        fechaHoraIngreso: firebase.firestore.FieldValue.serverTimestamp(),
         usuarioIngresoId: perfil.id,
         usuarioIngresoNombre: perfil.nombre
       });
@@ -1121,25 +1081,14 @@ function FormularioVisita({ guias, empresas, tiposVehiculo, perfil, mostrarToast
             </div>
           </div>
 
-          <div className="field-row">
-            <div className="field">
-              <label>Ticket de estacionamiento</label>
-              <input
-                value={ticket}
-                onChange={(e) => setTicket(e.target.value.toUpperCase())}
-                placeholder="Número impreso en el ticket"
-                required
-              />
-            </div>
-            <div className="field">
-              <label>Hora de ingreso</label>
-              <input
-                type="time"
-                value={horaIngreso}
-                onChange={(e) => setHoraIngreso(e.target.value)}
-                required
-              />
-            </div>
+          <div className="field">
+            <label>Ticket de estacionamiento</label>
+            <input
+              value={ticket}
+              onChange={(e) => setTicket(e.target.value.toUpperCase())}
+              placeholder="Número impreso en el ticket"
+              required
+            />
           </div>
 
           <button className="btn btn-primary" disabled={cargando} style={{ width: "auto", padding: "11px 24px" }}>
@@ -1156,8 +1105,8 @@ function FormularioVisita({ guias, empresas, tiposVehiculo, perfil, mostrarToast
 // ---------------------------------------------------------------------------
 
 function formatearFechaHora(fecha) {
-  const d = aFechaJS(fecha);
-  if (!d) return "—";
+  if (!fecha) return "—";
+  const d = fecha.toDate ? fecha.toDate() : new Date(fecha);
   return d.toLocaleString("es-PY", { dateStyle: "short", timeStyle: "short" });
 }
 
@@ -1185,11 +1134,10 @@ async function obtenerLogoParaPdf() {
   }
 }
 
-async function generarPdfPermisoSalida(visita, usuarioNombre, motivos, autorizadoPorLocal) {
+async function generarPdfPermisoSalida(visita, usuarioNombre) {
   const { jsPDF } = window.jspdf;
   const ancho = 100;
-  const alto = 150; // más alto que antes: entran los motivos, autorizante y las 2 firmas
-  const doc = new jsPDF({ unit: "mm", format: [ancho, alto] });
+  const doc = new jsPDF({ unit: "mm", format: [ancho, 95] });
 
   const margen = 10;
   let y = 16;
@@ -1231,17 +1179,14 @@ async function generarPdfPermisoSalida(visita, usuarioNombre, motivos, autorizad
     doc.setFontSize(9);
     doc.text(etiqueta, margen, y);
     doc.setFont("helvetica", "normal");
-    const lineas = doc.splitTextToSize(String(valor), ancho - margen * 2);
-    doc.text(lineas, margen, y + 5);
-    y += 6 + (lineas.length - 1) * 4.5 + 6;
+    doc.text(String(valor), margen, y + 5);
+    y += 12;
   }
 
   fila("Guía", visita.guiaNombre);
   fila("Empresa", visita.empresaNombre);
   fila("Vehículo / Chapa", `${visita.vehiculoTipoNombre} — ${visita.chapa}`);
   fila("N° Ticket de estacionamiento", visita.ticketEstacionamiento);
-  fila("Motivo de la salida", (motivos || []).join(" / ") || "—");
-  fila("Autorizado por local", autorizadoPorLocal || "—");
 
   doc.setLineWidth(0.3);
   doc.line(margen, y, ancho - margen, y);
@@ -1252,163 +1197,7 @@ async function generarPdfPermisoSalida(visita, usuarioNombre, motivos, autorizad
   y += 5;
   doc.text(`Emitido: ${new Date().toLocaleString("es-PY")}`, margen, y);
 
-  // Espacios de firma: guía y autorizante del local.
-  y += 16;
-  doc.setLineWidth(0.2);
-  doc.line(margen, y, ancho - margen, y);
-  y += 4;
-  doc.setFontSize(8);
-  doc.text("Firma del guía", margen, y);
-
-  y += 20;
-  doc.line(margen, y, ancho - margen, y);
-  y += 4;
-  doc.text("Firma autorizante del local", margen, y);
-
   doc.save(`permiso-salida-${visita.ticketEstacionamiento}.pdf`);
-}
-
-const MOTIVOS_SALIDA_FIJOS = [
-  "Buscar pasajero",
-  "Entregar mercaderías/pedidos",
-  "Asuntos administrativos",
-  "Taller mecánico/mantenimiento"
-];
-
-function ModalPermisoSalida({ visita, perfil, onClose, mostrarToast }) {
-  const [seleccionados, setSeleccionados] = useState({});
-  const [otroMotivoTexto, setOtroMotivoTexto] = useState("");
-  const [autorizadoPorLocal, setAutorizadoPorLocal] = useState("");
-  const [error, setError] = useState("");
-  const [cargando, setCargando] = useState(false);
-  // Igual que en la liberación: si ya se guardó en Firestore pero falló la
-  // impresión, no hay que repetir el guardado — solo reintentar imprimir.
-  const [yaOtorgado, setYaOtorgado] = useState(false);
-  const [motivosGuardados, setMotivosGuardados] = useState(null);
-  const [autorizanteGuardado, setAutorizanteGuardado] = useState("");
-  const [numeroPermiso, setNumeroPermiso] = useState(null);
-
-  function toggleMotivo(m) {
-    setSeleccionados((prev) => ({ ...prev, [m]: !prev[m] }));
-  }
-
-  async function confirmar() {
-    setError("");
-
-    const motivosFinal = MOTIVOS_SALIDA_FIJOS.filter((m) => seleccionados[m]);
-    if (otroMotivoTexto.trim()) {
-      motivosFinal.push(`Otro motivo: ${otroMotivoTexto.trim()}`);
-    }
-    if (motivosFinal.length === 0) {
-      setError("Marcá al menos un motivo de salida, o completá el campo \"Otro motivo\".");
-      return;
-    }
-    if (!autorizadoPorLocal.trim()) {
-      setError('El campo "Autorizado por local" es obligatorio.');
-      return;
-    }
-
-    setCargando(true);
-    let numero;
-    try {
-      numero = await asignarNumeroSecuencial(
-        "permisosSalida",
-        db.collection("visitas").doc(visita.id),
-        "numeroPermiso",
-        {
-          permisoSalida: true,
-          permisoSalidaPor: perfil.nombre,
-          permisoSalidaFecha: firebase.firestore.FieldValue.serverTimestamp(),
-          motivosSalida: motivosFinal,
-          autorizadoPorLocal: autorizadoPorLocal.trim()
-        }
-      );
-      setMotivosGuardados(motivosFinal);
-      setAutorizanteGuardado(autorizadoPorLocal.trim());
-      setNumeroPermiso(numero);
-      setYaOtorgado(true);
-    } catch (err) {
-      console.error(err);
-      setError("No se pudo otorgar el permiso de salida. Probá de nuevo.");
-      setCargando(false);
-      return;
-    }
-    await intentarImprimir(motivosFinal, autorizadoPorLocal.trim(), numero);
-  }
-
-  async function intentarImprimir(motivos, autorizante, numeroParam) {
-    setCargando(true);
-    setError("");
-    const ok = await imprimirPermisoSalida(
-      visita,
-      perfil.nombre,
-      motivos || motivosGuardados,
-      autorizante || autorizanteGuardado,
-      numeroParam || numeroPermiso
-    );
-    if (ok) {
-      mostrarToast("Permiso de salida otorgado.");
-      setCargando(false);
-      onClose();
-    } else {
-      setError(
-        "El permiso se otorgó, pero no se pudo imprimir el ticket. " +
-        "Verificá que la PC de la impresora esté prendida y el servidor de impresión abierto, y volvé a intentar."
-      );
-      setCargando(false);
-    }
-  }
-
-  return (
-    <Modal titulo={`Permiso de salida — ${visita.guiaNombre}`} onClose={onClose}>
-      {error && <div className="form-error">{error}</div>}
-
-      <div className="field">
-        <label>Motivo de la salida</label>
-        <div className="checkbox-list">
-          {MOTIVOS_SALIDA_FIJOS.map((m) => (
-            <div className="checkbox-row" key={m}>
-              <input
-                type="checkbox"
-                id={`motivo-${m}`}
-                checked={!!seleccionados[m]}
-                onChange={() => toggleMotivo(m)}
-                disabled={yaOtorgado}
-              />
-              <label htmlFor={`motivo-${m}`}>{m}</label>
-            </div>
-          ))}
-        </div>
-        <label style={{ marginTop: 10, display: "block" }}>Otro motivo</label>
-        <input
-          value={otroMotivoTexto}
-          onChange={(e) => setOtroMotivoTexto(e.target.value)}
-          placeholder="Detalle del motivo (opcional)"
-          disabled={yaOtorgado}
-        />
-      </div>
-
-      <div className="field" style={{ marginTop: 14 }}>
-        <label>Autorizado por local *</label>
-        <input
-          value={autorizadoPorLocal}
-          onChange={(e) => setAutorizadoPorLocal(e.target.value.toUpperCase())}
-          placeholder="Nombre de quien autoriza desde el local"
-          required
-          disabled={yaOtorgado}
-        />
-      </div>
-
-      <button
-        className="btn btn-primary"
-        style={{ width: "100%", marginTop: 16 }}
-        disabled={cargando}
-        onClick={yaOtorgado ? () => intentarImprimir() : confirmar}
-      >
-        {cargando ? "Procesando..." : yaOtorgado ? "Reintentar impresión" : "Otorgar permiso e imprimir"}
-      </button>
-    </Modal>
-  );
 }
 
 async function generarPdfLiberacion(visita, usuarioNombre) {
@@ -1506,202 +1295,7 @@ async function generarPdfLiberacion(visita, usuarioNombre) {
   doc.save(`liberacion-ticket-${visita.ticketEstacionamiento}.pdf`);
 }
 
-// ---------------------------------------------------------------------------
-// Numeración secuencial (liberaciones y permisos de salida)
-// ---------------------------------------------------------------------------
-// Cada tipo de documento tiene su propio contador en Firestore
-// (colección "contadores", documentos "liberaciones" / "permisosSalida").
-// Se incrementa de forma atómica junto con el guardado del documento
-// principal, todo dentro de la misma transacción — así nunca se repite un
-// número ni se pierde uno aunque dos operadores actúen casi al mismo tiempo.
-async function asignarNumeroSecuencial(contadorId, docRef, campoNumero, camposExtra) {
-  const contadorRef = db.collection("contadores").doc(contadorId);
-  return db.runTransaction(async (tx) => {
-    const snap = await tx.get(contadorRef);
-    const actual = snap.exists ? Number(snap.data().ultimo) || 0 : 0;
-    const siguiente = actual + 1;
-    tx.set(contadorRef, { ultimo: siguiente }, { merge: true });
-    tx.update(docRef, { ...camposExtra, [campoNumero]: siguiente });
-    return siguiente;
-  });
-}
-
-function formatearNumeroSecuencial(n) {
-  return String(n).padStart(6, "0");
-}
-
-// ---------------------------------------------------------------------------
-// Impresión directa del comprobante de liberación (impresora térmica de red)
-// ---------------------------------------------------------------------------
-// En vez de descargar un PDF, el ticket sale directo por la impresora térmica
-// (Epson TM-T20IV-L) conectada en red, a través de un pequeño servidor local
-// ("print-bridge") que corre en la PC del punto de cobro y escucha en
-// http://localhost:5555. Ver la carpeta print-bridge/ para el detalle.
-
-const PRINT_BRIDGE_URL = "http://localhost:5555/imprimir";
-const LLAVE_ULTIMO_TICKET = "spx_ultimoTicketLiberado";
-
-// Manda un pedido de impresión al servidor local. Devuelve true/false en vez
-// de tirar error, para que la app pueda mostrar un aviso simple ("no se pudo
-// imprimir, revisá el servidor") sin romper el flujo de la liberación.
-async function imprimirDirecto({ lines, logo, cortar = true }) {
-  try {
-    const res = await fetch(PRINT_BRIDGE_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ lines, logo: logo || null, cortar }),
-      signal: AbortSignal.timeout(8000)
-    });
-    const data = await res.json();
-    return !!data.ok;
-  } catch (err) {
-    console.warn("No se pudo imprimir directo:", err);
-    return false;
-  }
-}
-
-// Una "fila" del comprobante: etiqueta en negrita arriba, valor debajo.
-function filaComprobante(etiqueta, valor) {
-  return [
-    { text: etiqueta, bold: true, align: "left" },
-    { text: String(valor), align: "left" }
-  ];
-}
-
-function construirLineasComprobante(visita, usuarioNombre, rotulo, partner, numeroLiberacion) {
-  const L = [];
-  if (rotulo) L.push({ text: rotulo, bold: true, align: "center" });
-  L.push({ text: "SHOPPING PARIS", bold: true, big: true, align: "center" });
-  L.push({ text: "Comprobante de liberacion de estacionamiento", align: "center" });
-  L.push({ text: "--------------------------------", align: "center" });
-  if (numeroLiberacion) {
-    L.push({ text: `N Liberacion: ${formatearNumeroSecuencial(numeroLiberacion)}`, bold: true, align: "center" });
-  }
-  L.push(...filaComprobante("Guia", visita.guiaNombre));
-  L.push(...filaComprobante("Empresa", visita.empresaNombre));
-  L.push(...filaComprobante("Vehiculo / Chapa", `${visita.vehiculoTipoNombre} - ${visita.chapa}`));
-  L.push(...filaComprobante("N Ticket de estacionamiento", visita.ticketEstacionamiento));
-  L.push(...filaComprobante("Ingreso", formatearFechaHora(visita.fechaHoraIngreso)));
-  L.push(...filaComprobante("Salida", formatearFechaHora(visita.fechaHoraSalida || new Date())));
-  L.push(...filaComprobante("Tiempo de permanencia", tiempoTranscurrido(visita.fechaHoraIngreso)));
-  if (partner) {
-    L.push(...filaComprobante("Liberacion", "PARTNER (sin monto minimo)"));
-  } else {
-    L.push(...filaComprobante("Monto acumulado en compras", `$ ${Number(visita.montoAcumulado || 0).toLocaleString("es-AR")}`));
-  }
-  L.push({ text: "--------------------------------", align: "center" });
-  L.push({ text: `Liberado por: ${usuarioNombre}` });
-  L.push({ text: `Emitido: ${new Date().toLocaleString("es-PY")}` });
-  // Espacio para que el operador firme a mano sobre el papel.
-  L.push({ text: " " });
-  L.push({ text: " " });
-  L.push({ text: "Firma del operador:" });
-  L.push({ text: "________________________" });
-  return L;
-}
-
-// Reutiliza el mismo logo que ya usa el PDF (config/branding en Firestore + Storage).
-async function obtenerLogoBase64ParaTicket() {
-  const logo = await obtenerLogoParaPdf();
-  return logo ? logo.dataUrl : null;
-}
-
-// Imprime las 2 copias del comprobante (una para el guía, una para el shopping),
-// cada una como un ticket separado (corta papel entre una y otra). "partner"
-// indica que se liberó sin exigir el monto mínimo (tienda Partner del shopping).
-async function imprimirComprobanteLiberacion(visita, usuarioNombre, partner, numeroLiberacion) {
-  const logo = await obtenerLogoBase64ParaTicket();
-  const okGuia = await imprimirDirecto({
-    lines: construirLineasComprobante(visita, usuarioNombre, "COPIA: GUÍA", partner, numeroLiberacion),
-    logo,
-    cortar: true
-  });
-  if (!okGuia) return false;
-  const okShopping = await imprimirDirecto({
-    lines: construirLineasComprobante(visita, usuarioNombre, "COPIA: SHOPPING", partner, numeroLiberacion),
-    logo,
-    cortar: true
-  });
-  return okShopping;
-}
-
-// ---------------------------------------------------------------------------
-// Impresión directa del permiso de salida (misma impresora térmica)
-// ---------------------------------------------------------------------------
-
-function construirLineasPermisoSalida(visita, usuarioNombre, motivos, autorizadoPorLocal, rotulo, numeroPermiso) {
-  const L = [];
-  if (rotulo) L.push({ text: rotulo, bold: true, align: "center" });
-  L.push({ text: "SHOPPING PARIS", bold: true, big: true, align: "center" });
-  L.push({ text: "Permiso de salida de estacionamiento", align: "center" });
-  L.push({ text: "--------------------------------", align: "center" });
-  if (numeroPermiso) {
-    L.push({ text: `N Permiso: ${formatearNumeroSecuencial(numeroPermiso)}`, bold: true, align: "center" });
-  }
-  L.push(...filaComprobante("Guia", visita.guiaNombre));
-  L.push(...filaComprobante("Empresa", visita.empresaNombre));
-  L.push(...filaComprobante("Vehiculo / Chapa", `${visita.vehiculoTipoNombre} - ${visita.chapa}`));
-  L.push(...filaComprobante("N Ticket de estacionamiento", visita.ticketEstacionamiento));
-  L.push(...filaComprobante("Motivo de la salida", (motivos || []).join(" / ") || "-"));
-  L.push(...filaComprobante("Autorizado por local", (autorizadoPorLocal || "-").toUpperCase()));
-  L.push({ text: "--------------------------------", align: "center" });
-  L.push({ text: `Otorgado por: ${usuarioNombre}` });
-  L.push({ text: `Emitido: ${new Date().toLocaleString("es-PY")}` });
-  // Espacio en blanco para firmar a mano sobre el papel (lapicera), ya que
-  // al ser un ticket térmico no hay firma digital posible.
-  L.push({ text: " " });
-  L.push({ text: " " });
-  L.push({ text: "Firma del guia:" });
-  L.push({ text: "________________________" });
-  L.push({ text: " " });
-  L.push({ text: " " });
-  L.push({ text: "Firma autorizante local:" });
-  L.push({ text: "________________________" });
-  return L;
-}
-
-// Imprime las 2 copias del permiso de salida (una para el guía, una para el
-// local), cada una como un ticket separado.
-async function imprimirPermisoSalida(visita, usuarioNombre, motivos, autorizadoPorLocal, numeroPermiso) {
-  const logo = await obtenerLogoBase64ParaTicket();
-  const okGuia = await imprimirDirecto({
-    lines: construirLineasPermisoSalida(visita, usuarioNombre, motivos, autorizadoPorLocal, "COPIA: GUÍA", numeroPermiso),
-    logo,
-    cortar: true
-  });
-  if (!okGuia) return false;
-  const okLocal = await imprimirDirecto({
-    lines: construirLineasPermisoSalida(visita, usuarioNombre, motivos, autorizadoPorLocal, "COPIA: LOCAL", numeroPermiso),
-    logo,
-    cortar: true
-  });
-  return okLocal;
-}
-
-// Guarda el último ticket liberado en el navegador para poder reimprimirlo más
-// tarde (por ejemplo si la impresora estaba apagada en el momento). Se guarda
-// por unas horas nomás, para no arriesgarse a reimprimir un ticket viejo por error.
-function guardarUltimoTicketLiberado(visita, usuarioNombre) {
-  try {
-    localStorage.setItem(LLAVE_ULTIMO_TICKET, JSON.stringify({ visita, usuarioNombre, guardadoEn: Date.now() }));
-  } catch (err) {
-    console.warn("No se pudo guardar el último ticket liberado:", err);
-  }
-}
-
-function obtenerUltimoTicketLiberado() {
-  try {
-    const raw = localStorage.getItem(LLAVE_ULTIMO_TICKET);
-    if (!raw) return null;
-    const data = JSON.parse(raw);
-    if (Date.now() - data.guardadoEn > 1000 * 60 * 60 * 4) return null; // vence a las 4hs
-    return data;
-  } catch (err) {
-    return null;
-  }
-}
-
-function ModalLiberarVisita({ visita, perfil, modoPartner, onClose, mostrarToast }) {
+function ModalLiberarVisita({ visita, perfil, onClose, mostrarToast }) {
   const [montoNuevo, setMontoNuevo] = useState("");
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState("");
@@ -1709,7 +1303,7 @@ function ModalLiberarVisita({ visita, perfil, modoPartner, onClose, mostrarToast
   const porcentaje = visita.montoMinimoRequerido > 0
     ? Math.min(100, Math.round((visita.montoAcumulado / visita.montoMinimoRequerido) * 100))
     : 0;
-  const alcanzado = !!modoPartner || visita.montoAcumulado >= visita.montoMinimoRequerido;
+  const alcanzado = visita.montoAcumulado >= visita.montoMinimoRequerido;
   const falta = Math.max(0, visita.montoMinimoRequerido - visita.montoAcumulado);
 
   async function agregarMonto(e) {
@@ -1735,54 +1329,22 @@ function ModalLiberarVisita({ visita, perfil, modoPartner, onClose, mostrarToast
     }
   }
 
-  // Cuando la impresión falla pero el estacionamiento ya quedó liberado en la
-  // base, no hay que reintentar el paso de Firestore — solo la impresión.
-  const [yaLiberado, setYaLiberado] = useState(false);
-  const [numeroLiberacion, setNumeroLiberacion] = useState(null);
-
   async function liberar() {
     setCargando(true);
     setError("");
-    let numero;
     try {
-      numero = await asignarNumeroSecuencial(
-        "liberaciones",
-        db.collection("visitas").doc(visita.id),
-        "numeroLiberacion",
-        {
-          estado: "liberado",
-          fechaHoraSalida: firebase.firestore.FieldValue.serverTimestamp(),
-          usuarioSalidaId: perfil.id,
-          usuarioSalidaNombre: perfil.nombre,
-          liberadoComoPartner: !!modoPartner
-        }
-      );
-      setNumeroLiberacion(numero);
-      setYaLiberado(true);
+      await db.collection("visitas").doc(visita.id).update({
+        estado: "liberado",
+        fechaHoraSalida: firebase.firestore.FieldValue.serverTimestamp(),
+        usuarioSalidaId: perfil.id,
+        usuarioSalidaNombre: perfil.nombre
+      });
+      await generarPdfLiberacion(visita, perfil.nombre);
+      mostrarToast(`Estacionamiento liberado: ${visita.guiaNombre}`);
+      onClose();
     } catch (err) {
       console.error(err);
       setError("No se pudo liberar el estacionamiento. Probá de nuevo.");
-      setCargando(false);
-      return;
-    }
-    await intentarImprimir(numero);
-  }
-
-  async function intentarImprimir(numeroParam) {
-    const numero = numeroParam || numeroLiberacion;
-    setCargando(true);
-    setError("");
-    const ok = await imprimirComprobanteLiberacion(visita, perfil.nombre, modoPartner, numero);
-    if (ok) {
-      guardarUltimoTicketLiberado({ ...visita, numeroLiberacion: numero, liberadoComoPartner: !!modoPartner }, perfil.nombre);
-      mostrarToast(`Estacionamiento liberado: ${visita.guiaNombre}`);
-      setCargando(false);
-      onClose();
-    } else {
-      setError(
-        "El estacionamiento se liberó, pero no se pudo imprimir el ticket. " +
-        "Verificá que la PC de la impresora esté prendida y el servidor de impresión abierto, y volvé a intentar."
-      );
       setCargando(false);
     }
   }
@@ -1798,75 +1360,50 @@ function ModalLiberarVisita({ visita, perfil, modoPartner, onClose, mostrarToast
         <span><strong>En sala:</strong> {tiempoTranscurrido(visita.fechaHoraIngreso)}</span>
       </div>
 
-      {modoPartner ? (
-        <div
-          style={{
-            background: "var(--paper)",
-            border: "1px solid var(--gold)",
-            borderRadius: 8,
-            padding: "10px 12px",
-            marginBottom: 18,
-            fontSize: 13
-          }}
-        >
-          <strong>Liberación Partner:</strong> se va a liberar el estacionamiento sin exigir el monto mínimo de compra, ya que la empresa es tienda Partner del shopping.
+      <div style={{ marginBottom: 18 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 6 }}>
+          <span>
+            $ {Number(visita.montoAcumulado || 0).toLocaleString("es-AR")} de $ {Number(visita.montoMinimoRequerido || 0).toLocaleString("es-AR")}
+          </span>
+          <span style={{ fontWeight: 600 }}>{porcentaje}%</span>
         </div>
-      ) : (
-        <React.Fragment>
-          <div style={{ marginBottom: 18 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 6 }}>
-              <span>
-                $ {Number(visita.montoAcumulado || 0).toLocaleString("es-AR")} de $ {Number(visita.montoMinimoRequerido || 0).toLocaleString("es-AR")}
-              </span>
-              <span style={{ fontWeight: 600 }}>{porcentaje}%</span>
-            </div>
-            <div style={{ height: 8, borderRadius: 4, background: "var(--paper)", overflow: "hidden" }}>
-              <div
-                style={{
-                  height: "100%",
-                  width: `${porcentaje}%`,
-                  background: alcanzado ? "var(--success)" : "var(--gold)",
-                  transition: "width 0.2s ease"
-                }}
-              ></div>
-            </div>
-            {!alcanzado && (
-              <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 6 }}>
-                Faltan $ {falta.toLocaleString("es-AR")} para liberar el estacionamiento.
-              </p>
-            )}
-            {alcanzado && (
-              <p style={{ fontSize: 12, color: "var(--success)", marginTop: 6, fontWeight: 600 }}>
-                ✓ Alcanzó el monto mínimo — ya se puede liberar.
-              </p>
-            )}
-          </div>
+        <div style={{ height: 8, borderRadius: 4, background: "var(--paper)", overflow: "hidden" }}>
+          <div
+            style={{
+              height: "100%",
+              width: `${porcentaje}%`,
+              background: alcanzado ? "var(--success)" : "var(--gold)",
+              transition: "width 0.2s ease"
+            }}
+          ></div>
+        </div>
+        {!alcanzado && (
+          <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 6 }}>
+            Faltan $ {falta.toLocaleString("es-AR")} para liberar el estacionamiento.
+          </p>
+        )}
+        {alcanzado && (
+          <p style={{ fontSize: 12, color: "var(--success)", marginTop: 6, fontWeight: 600 }}>
+            ✓ Alcanzó el monto mínimo — ya se puede liberar.
+          </p>
+        )}
+      </div>
 
-          <form onSubmit={agregarMonto} style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              placeholder="Monto del comprobante"
-              value={montoNuevo}
-              onChange={(e) => setMontoNuevo(e.target.value)}
-              style={{ flex: 1, padding: "10px 12px", border: "1px solid var(--line)", borderRadius: 8 }}
-            />
-            <button className="btn btn-ghost" disabled={cargando}>Agregar</button>
-          </form>
-        </React.Fragment>
-      )}
+      <form onSubmit={agregarMonto} style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+        <input
+          type="number"
+          min="0"
+          step="0.01"
+          placeholder="Monto del comprobante"
+          value={montoNuevo}
+          onChange={(e) => setMontoNuevo(e.target.value)}
+          style={{ flex: 1, padding: "10px 12px", border: "1px solid var(--line)", borderRadius: 8 }}
+        />
+        <button className="btn btn-ghost" disabled={cargando}>Agregar</button>
+      </form>
 
-      <button
-        className="btn btn-primary"
-        disabled={(!alcanzado && !yaLiberado) || cargando}
-        onClick={yaLiberado ? () => intentarImprimir() : liberar}
-      >
-        {cargando
-          ? "Procesando..."
-          : yaLiberado
-          ? "Reintentar impresión"
-          : "Liberar estacionamiento y emitir ticket"}
+      <button className="btn btn-primary" disabled={!alcanzado || cargando} onClick={liberar}>
+        {cargando ? "Procesando..." : "Liberar estacionamiento y emitir ticket"}
       </button>
     </Modal>
   );
@@ -2273,218 +1810,6 @@ function fechaISO(date) {
   return `${y}-${m}-${d}`;
 }
 
-const ESTADO_VISITA_LABEL = { en_curso: "En curso", liberado: "Liberado", no_liberado: "No liberado" };
-
-// Cuenta valores distintos (no vacíos) de un campo dentro de un array de objetos.
-function contarUnicos(datos, campo) {
-  return new Set(datos.map((d) => d[campo]).filter((v) => v !== undefined && v !== null && v !== "")).size;
-}
-
-// Agrupa las visitas por guía para el reporte de "personas ingresadas por guía".
-function agruparPersonasPorGuia(visitas) {
-  const mapa = new Map();
-  for (const v of visitas) {
-    const key = v.guiaNombre || "(sin nombre)";
-    if (!mapa.has(key)) {
-      mapa.set(key, { guia: key, empresa: v.empresaNombre || "", visitas: 0, pasajeros: 0 });
-    }
-    const item = mapa.get(key);
-    item.visitas += 1;
-    item.pasajeros += Number(v.cantPasajeros) || 0;
-  }
-  return Array.from(mapa.values()).sort((a, b) => b.pasajeros - a.pasajeros);
-}
-
-// Configuración de los 4 reportes desplegables desde las tarjetas de "Actividad por período".
-// "totales" arma la fila de resumen que se muestra en pantalla y al pie del PDF.
-const REPORTES_DETALLE_CONFIG = {
-  personas: {
-    titulo: "Personas ingresadas por guía",
-    columnas: ["Guía", "Empresa", "Visitas", "Pasajeros"],
-    datos: (visitas) => agruparPersonasPorGuia(visitas),
-    filas: (datos) => datos.map((r) => [r.guia, r.empresa, r.visitas, r.pasajeros]),
-    totales: (datos) => [
-      { label: "Total de Guías", valor: datos.length },
-      { label: "Total de Empresas", valor: contarUnicos(datos, "empresa") },
-      { label: "Total de Visitas", valor: datos.reduce((acc, r) => acc + r.visitas, 0) },
-      { label: "Total de Pasajeros", valor: datos.reduce((acc, r) => acc + r.pasajeros, 0) }
-    ]
-  },
-  vehiculos: {
-    titulo: "Vehículos ingresados",
-    columnas: ["Fecha ingreso", "Guía", "Empresa", "Vehículo", "Chapa", "Pasajeros", "Ticket", "Estado"],
-    datos: (visitas) => visitas,
-    filas: (datos) => datos.map((v) => [
-      formatearFechaHora(v.fechaHoraIngreso),
-      v.guiaNombre,
-      v.empresaNombre,
-      v.vehiculoTipoNombre,
-      v.chapa,
-      v.cantPasajeros,
-      v.ticketEstacionamiento,
-      ESTADO_VISITA_LABEL[v.estado] || v.estado
-    ]),
-    totales: (datos) => [
-      { label: "Total de Guías", valor: contarUnicos(datos, "guiaNombre") },
-      { label: "Total de Empresas", valor: contarUnicos(datos, "empresaNombre") },
-      { label: "Total de Vehículos", valor: datos.length },
-      { label: "Total de Tickets", valor: contarUnicos(datos, "ticketEstacionamiento") },
-      { label: "Total de Monto acumulado", valor: `$ ${datos.reduce((acc, v) => acc + (Number(v.montoAcumulado) || 0), 0).toLocaleString("es-AR")}` }
-    ]
-  },
-  liberados: {
-    titulo: "Vehículos liberados",
-    columnas: ["Fecha ingreso", "Fecha salida", "Guía", "Empresa", "Vehículo", "Ticket", "Monto acumulado"],
-    datos: (visitas) => visitas.filter((v) => v.estado === "liberado"),
-    filas: (datos) => datos.map((v) => [
-      formatearFechaHora(v.fechaHoraIngreso),
-      formatearFechaHora(v.fechaHoraSalida),
-      v.guiaNombre,
-      v.empresaNombre,
-      `${v.vehiculoTipoNombre} - ${v.chapa}`,
-      v.ticketEstacionamiento,
-      `$ ${Number(v.montoAcumulado || 0).toLocaleString("es-AR")}`
-    ]),
-    totales: (datos) => [
-      { label: "Total de Guías", valor: contarUnicos(datos, "guiaNombre") },
-      { label: "Total de Empresas", valor: contarUnicos(datos, "empresaNombre") },
-      { label: "Total de Vehículos", valor: datos.length },
-      { label: "Total de Tickets", valor: contarUnicos(datos, "ticketEstacionamiento") },
-      { label: "Total de Monto acumulado", valor: `$ ${datos.reduce((acc, v) => acc + (Number(v.montoAcumulado) || 0), 0).toLocaleString("es-AR")}` }
-    ]
-  },
-  no_liberados: {
-    titulo: "Vehículos no liberados",
-    columnas: ["Fecha", "Guía", "Empresa", "Vehículo", "Pasajeros", "Monto / Mínimo", "Faltó"],
-    datos: (visitas) => visitas.filter((v) => v.estado === "no_liberado"),
-    filas: (datos) => datos.map((v) => [
-      formatearFechaHora(v.fechaHoraIngreso),
-      v.guiaNombre,
-      v.empresaNombre,
-      `${v.vehiculoTipoNombre} · ${v.chapa}`,
-      v.cantPasajeros,
-      `$ ${Number(v.montoAcumulado || 0).toLocaleString("es-AR")} / $ ${Number(v.montoMinimoRequerido || 0).toLocaleString("es-AR")}`,
-      `$ ${Math.max(0, (v.montoMinimoRequerido || 0) - (v.montoAcumulado || 0)).toLocaleString("es-AR")}`
-    ]),
-    totales: (datos) => [
-      { label: "Total de Guías", valor: contarUnicos(datos, "guiaNombre") },
-      { label: "Total de Empresas", valor: contarUnicos(datos, "empresaNombre") },
-      { label: "Total de Vehículos", valor: datos.length },
-      { label: "Total de Tickets", valor: contarUnicos(datos, "ticketEstacionamiento") },
-      { label: "Total acumulado", valor: `$ ${datos.reduce((acc, v) => acc + (Number(v.montoAcumulado) || 0), 0).toLocaleString("es-AR")}` },
-      { label: "Total faltante", valor: `$ ${datos.reduce((acc, v) => acc + Math.max(0, (v.montoMinimoRequerido || 0) - (v.montoAcumulado || 0)), 0).toLocaleString("es-AR")}` }
-    ]
-  }
-};
-
-function ModalReporteDetalle({ tipo, visitas, desde, hasta, onClose }) {
-  const config = REPORTES_DETALLE_CONFIG[tipo];
-  const datos = config.datos(visitas);
-  const filas = config.filas(datos);
-  const totales = config.totales ? config.totales(datos) : [];
-
-  function descargarPDF() {
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(14);
-    doc.text("SHOPPING PARIS", 14, 15);
-    doc.setFontSize(11);
-    doc.text(config.titulo, 14, 22);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.text(`Período: ${desde} a ${hasta} — ${filas.length} ${filas.length === 1 ? "registro" : "registros"}`, 14, 28);
-    doc.autoTable({
-      startY: 33,
-      head: [config.columnas],
-      body: filas,
-      styles: { fontSize: 8, cellPadding: 2.5 },
-      headStyles: { fillColor: [31, 78, 120], textColor: 255 },
-      alternateRowStyles: { fillColor: [245, 243, 237] }
-    });
-
-    if (totales.length > 0) {
-      let y = doc.lastAutoTable.finalY + 10;
-      const alturaPagina = doc.internal.pageSize.getHeight();
-      if (y > alturaPagina - 20) {
-        doc.addPage();
-        y = 20;
-      }
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(10);
-      doc.text("Totales", 14, y);
-      y += 6;
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(9);
-      for (const t of totales) {
-        doc.text(`${t.label}: ${t.valor}`, 14, y);
-        y += 6;
-      }
-    }
-
-    doc.save(`reporte-${tipo}-${desde}-a-${hasta}.pdf`);
-  }
-
-  return (
-    <Modal titulo={config.titulo} onClose={onClose} ancho="1100px">
-      <p style={{ fontSize: 13, color: "var(--text-muted)", marginTop: -4, marginBottom: 14 }}>
-        Período: {desde} a {hasta} — {filas.length} {filas.length === 1 ? "registro" : "registros"}
-      </p>
-      <div style={{ maxHeight: "55vh", overflow: "auto", marginBottom: 14, border: "1px solid var(--line)", borderRadius: 8 }}>
-        <table className="data-table" style={{ minWidth: "max-content" }}>
-          <thead>
-            <tr>
-              {config.columnas.map((c) => <th key={c} style={{ whiteSpace: "nowrap" }}>{c}</th>)}
-            </tr>
-          </thead>
-          <tbody>
-            {filas.length === 0 ? (
-              <tr>
-                <td colSpan={config.columnas.length} style={{ textAlign: "center", color: "var(--text-muted)", padding: 20 }}>
-                  Sin registros en este período.
-                </td>
-              </tr>
-            ) : (
-              filas.map((fila, i) => (
-                <tr key={i}>
-                  {fila.map((celda, j) => <td key={j} style={{ whiteSpace: "nowrap" }}>{celda}</td>)}
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      {totales.length > 0 && (
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 10,
-            marginBottom: 18,
-            padding: "12px 14px",
-            background: "var(--paper)",
-            borderRadius: 8
-          }}
-        >
-          {totales.map((t) => (
-            <div key={t.label} style={{ minWidth: 140 }}>
-              <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.03em" }}>
-                {t.label}
-              </div>
-              <div style={{ fontSize: 18, fontWeight: 700 }}>{t.valor}</div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <button className="btn btn-primary" style={{ width: "100%" }} onClick={descargarPDF} disabled={filas.length === 0}>
-        Descargar PDF
-      </button>
-    </Modal>
-  );
-}
-
 function ReportesView() {
   const hoy = new Date();
   const [desde, setDesde] = useState(fechaISO(hoy));
@@ -2493,7 +1818,6 @@ function ReportesView() {
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState("");
   const [consultado, setConsultado] = useState(false);
-  const [reporteAbierto, setReporteAbierto] = useState(null);
 
   async function consultar(e) {
     if (e) e.preventDefault();
@@ -2584,65 +1908,23 @@ function ReportesView() {
       {consultado && (
         <React.Fragment>
           <div className="stat-grid">
-            <div
-              className="stat-card"
-              role="button"
-              tabIndex={0}
-              style={{ cursor: "pointer" }}
-              onClick={() => setReporteAbierto("personas")}
-              title="Ver detalle por guía"
-            >
+            <div className="stat-card">
               <div className="stat-label">Personas ingresadas</div>
               <div className="stat-value">{totalPersonas}</div>
-              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>Ver detalle →</div>
             </div>
-            <div
-              className="stat-card"
-              role="button"
-              tabIndex={0}
-              style={{ cursor: "pointer" }}
-              onClick={() => setReporteAbierto("vehiculos")}
-              title="Ver detalle de vehículos ingresados"
-            >
+            <div className="stat-card">
               <div className="stat-label">Vehículos ingresados</div>
               <div className="stat-value">{totalVehiculos}</div>
-              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>Ver detalle →</div>
             </div>
-            <div
-              className="stat-card"
-              role="button"
-              tabIndex={0}
-              style={{ cursor: "pointer" }}
-              onClick={() => setReporteAbierto("liberados")}
-              title="Ver detalle de vehículos liberados"
-            >
+            <div className="stat-card">
               <div className="stat-label">Liberados</div>
               <div className="stat-value" style={{ color: "var(--success)" }}>{liberadas}</div>
-              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>Ver detalle →</div>
             </div>
-            <div
-              className="stat-card"
-              role="button"
-              tabIndex={0}
-              style={{ cursor: "pointer" }}
-              onClick={() => setReporteAbierto("no_liberados")}
-              title="Ver detalle de vehículos no liberados"
-            >
+            <div className="stat-card">
               <div className="stat-label">No liberados</div>
               <div className="stat-value" style={{ color: "var(--alert)" }}>{noLiberadas}</div>
-              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>Ver detalle →</div>
             </div>
           </div>
-
-          {reporteAbierto && (
-            <ModalReporteDetalle
-              tipo={reporteAbierto}
-              visitas={visitas}
-              desde={desde}
-              hasta={hasta}
-              onClose={() => setReporteAbierto(null)}
-            />
-          )}
 
           {enCurso > 0 && (
             <p style={{ fontSize: 13, color: "var(--text-muted)", marginTop: -14, marginBottom: 20 }}>
@@ -2767,7 +2049,7 @@ function RankingView({ perfil }) {
     const porGuia = {};
     visitas.forEach((v) => {
       if (!porGuia[v.guiaId]) {
-        porGuia[v.guiaId] = { guiaId: v.guiaId, guiaNombre: v.guiaNombre, empresaNombre: v.empresaNombre || "", pasajeros: 0, visitas: 0, monto: 0 };
+        porGuia[v.guiaId] = { guiaId: v.guiaId, guiaNombre: v.guiaNombre, pasajeros: 0, visitas: 0, monto: 0 };
       }
       porGuia[v.guiaId].pasajeros += Number(v.cantPasajeros) || 0;
       porGuia[v.guiaId].visitas += 1;
@@ -2835,7 +2117,6 @@ function RankingView({ perfil }) {
                   <tr>
                     <th></th>
                     <th>Guía</th>
-                    <th>Empresa</th>
                     <th>Pasajeros</th>
                     <th>Visitas</th>
                     <th>Compras</th>
@@ -2847,7 +2128,6 @@ function RankingView({ perfil }) {
                     <tr key={g.guiaId}>
                       <td style={{ fontSize: 18 }}>{medallas[i] || i + 1}</td>
                       <td>{g.guiaNombre}</td>
-                      <td>{g.empresaNombre}</td>
                       <td>{g.pasajeros}</td>
                       <td>{g.visitas}</td>
                       <td>$ {g.monto.toLocaleString("es-AR")}</td>
@@ -3227,21 +2507,6 @@ function Shell({ perfil }) {
   const [toast, setToast] = useState("");
   const [online, setOnline] = useState(navigator.onLine);
   const [logoUrl, setLogoUrl] = useState(null);
-  const [sidebarColapsado, setSidebarColapsado] = useState(() => {
-    try {
-      return localStorage.getItem("spx_sidebarColapsado") === "true";
-    } catch (err) {
-      return false;
-    }
-  });
-
-  useEffect(() => {
-    try {
-      localStorage.setItem("spx_sidebarColapsado", String(sidebarColapsado));
-    } catch (err) {
-      // localStorage puede fallar en modo incógnito estricto; no es crítico.
-    }
-  }, [sidebarColapsado]);
 
   useEffect(() => {
     const on = () => setOnline(true);
@@ -3316,7 +2581,7 @@ function Shell({ perfil }) {
   }
 
   return (
-    <div className={`shell ${sidebarColapsado ? "sidebar-colapsado" : ""}`}>
+    <div className="shell">
       <aside className="sidebar">
         <div className="brand">
           {logoUrl ? (
@@ -3328,14 +2593,6 @@ function Shell({ perfil }) {
             <div className="brand-title">Shopping Paris</div>
             <div className="brand-sub">Sala de Guías</div>
           </div>
-          <button
-            className="sidebar-toggle"
-            onClick={() => setSidebarColapsado((v) => !v)}
-            title={sidebarColapsado ? "Expandir menú" : "Replegar menú"}
-            aria-label="Alternar menú"
-          >
-            {sidebarColapsado ? "»" : "«"}
-          </button>
         </div>
 
         <nav className="nav">
@@ -3344,11 +2601,9 @@ function Shell({ perfil }) {
               key={item.id}
               className={`nav-item ${vista === item.id ? "active" : ""}`}
               onClick={() => setVista(item.id)}
-              title={item.label}
             >
-              <span className="nav-icon">{item.icon}</span>
               <span className="dot"></span>
-              <span className="nav-label">{item.label}</span>
+              {item.label}
             </button>
           ))}
         </nav>
@@ -3361,12 +2616,8 @@ function Shell({ perfil }) {
               <div className="user-role">{perfil.rolNombre}</div>
             </div>
           </div>
-          <button className="link-muted" onClick={() => auth.signOut()} title="Cerrar sesión">
-            {sidebarColapsado ? "⏻" : "Cerrar sesión"}
-          </button>
-          {!sidebarColapsado && (
-            <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.10</div>
-          )}
+          <button className="link-muted" onClick={() => auth.signOut()}>Cerrar sesión</button>
+          <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.0</div>
         </div>
       </aside>
 
