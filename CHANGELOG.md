@@ -2,6 +2,12 @@
 
 Versionado simplificado `vMAJOR.MINOR`. MAJOR = cambios de arquitectura o que rompen datos existentes. MINOR = funcionalidad nueva incremental.
 
+## v1.7 — 2026-08-11
+
+Limpieza de Reportes.
+
+- Se sacó el botón general "Descargar PDF" de arriba (el que generaba un PDF con todo junto) — quedó reemplazado por los botones de PDF específicos de cada categoría desplegable, que cubren el mismo caso de uso de forma más precisa.
+
 ## v1.6 — 2026-08-11
 
 Detalle desplegable en Reportes.

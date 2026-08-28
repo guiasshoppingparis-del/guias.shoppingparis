@@ -268,7 +268,7 @@ function PanelInicio({ perfil }) {
       </div>
 
       <div className="ticket">
-        <div className="ticket-stub">v1.6</div>
+        <div className="ticket-stub">v1.7</div>
         <div className="ticket-perforation"></div>
         <div className="ticket-body">
           <h2 style={{ fontSize: 16, marginBottom: 6 }}>Versión estable</h2>
@@ -1942,143 +1942,6 @@ function fechaISO(date) {
   return `${y}-${m}-${d}`;
 }
 
-async function generarPdfReporte({ desde, hasta, totalPersonas, totalVehiculos, liberadas, noLiberadas, guiasNoLiberados }) {
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ unit: "mm", format: "a4" });
-  const margen = 15;
-  const anchoUtil = 210 - margen * 2;
-  let y = margen;
-
-  const logo = await obtenerLogoParaPdf();
-
-  if (logo) {
-    try {
-      doc.addImage(logo.dataUrl, logo.formato, margen, y, 16, 16);
-    } catch (err) {
-      console.warn("No se pudo incrustar el logo en el PDF:", err);
-    }
-  }
-  const xTexto = logo ? margen + 20 : margen;
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(16);
-  doc.text("SHOPPING PARIS", xTexto, y + 7);
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(10);
-  doc.text("Reporte de actividad — Sala de Guías", xTexto, y + 13);
-  y += 22;
-
-  doc.setFontSize(9);
-  doc.setTextColor(100);
-  doc.text(`Período: ${desde} a ${hasta}`, margen, y);
-  doc.text(`Emitido: ${new Date().toLocaleString("es-PY")}`, 210 - margen, y, { align: "right" });
-  doc.setTextColor(0);
-  y += 6;
-  doc.setLineWidth(0.3);
-  doc.line(margen, y, 210 - margen, y);
-  y += 10;
-
-  // Resumen
-  const resumen = [
-    ["Personas ingresadas", totalPersonas],
-    ["Vehículos ingresados", totalVehiculos],
-    ["Liberados", liberadas],
-    ["No liberados", noLiberadas]
-  ];
-  const anchoCaja = anchoUtil / 4;
-  resumen.forEach(([etiqueta, valor], i) => {
-    const x = margen + i * anchoCaja;
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
-    doc.setTextColor(110);
-    doc.text(etiqueta, x, y);
-    doc.setTextColor(0);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(15);
-    doc.text(String(valor), x, y + 8);
-  });
-  y += 18;
-  doc.setLineWidth(0.2);
-  doc.setDrawColor(210);
-  doc.line(margen, y, 210 - margen, y);
-  doc.setDrawColor(0);
-  y += 10;
-
-  // Tabla de guías no liberados
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(11);
-  doc.text("Guías no liberados", margen, y);
-  y += 7;
-
-  const columnas = [
-    { titulo: "Fecha", ancho: 26 },
-    { titulo: "Guía", ancho: 38 },
-    { titulo: "Empresa", ancho: 32 },
-    { titulo: "Vehículo", ancho: 28 },
-    { titulo: "Pas.", ancho: 14 },
-    { titulo: "Monto / Mínimo", ancho: 28 },
-    { titulo: "Faltó", ancho: 14 }
-  ];
-
-  function dibujarEncabezadoTabla() {
-    doc.setFillColor(230, 225, 210);
-    doc.rect(margen, y - 4.5, anchoUtil, 6.5, "F");
-    let x = margen + 1.5;
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(7.5);
-    doc.setTextColor(60);
-    columnas.forEach((c) => {
-      doc.text(c.titulo, x, y);
-      x += c.ancho;
-    });
-    doc.setTextColor(0);
-    y += 6;
-  }
-
-  if (guiasNoLiberados.length === 0) {
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.setTextColor(120);
-    doc.text("No hubo visitas sin liberar en este período.", margen, y);
-    doc.setTextColor(0);
-  } else {
-    dibujarEncabezadoTabla();
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7.5);
-
-    guiasNoLiberados.forEach((v, i) => {
-      if (y > 297 - margen - 10) {
-        doc.addPage();
-        y = margen + 5;
-        dibujarEncabezadoTabla();
-      }
-      if (i % 2 === 1) {
-        doc.setFillColor(247, 245, 241);
-        doc.rect(margen, y - 4, anchoUtil, 5.5, "F");
-      }
-      const falto = Math.max(0, (v.montoMinimoRequerido || 0) - (v.montoAcumulado || 0));
-      const fila = [
-        formatearFechaHora(v.fechaHoraIngreso),
-        v.guiaNombre || "",
-        v.empresaNombre || "",
-        `${v.vehiculoTipoNombre || ""} ${v.chapa || ""}`,
-        String(v.cantPasajeros ?? ""),
-        `$${Number(v.montoAcumulado || 0).toLocaleString("es-AR")}/$${Number(v.montoMinimoRequerido || 0).toLocaleString("es-AR")}`,
-        `$${falto.toLocaleString("es-AR")}`
-      ];
-      let x = margen + 1.5;
-      fila.forEach((valor, idx) => {
-        const maxChars = Math.floor(columnas[idx].ancho / 1.7);
-        const texto = String(valor).length > maxChars ? String(valor).slice(0, maxChars - 1) + "…" : String(valor);
-        doc.text(texto, x, y);
-        x += columnas[idx].ancho;
-      });
-      y += 5.5;
-    });
-  }
-
-  doc.save(`reporte-actividad-${desde}-a-${hasta}.pdf`);
-}
-
 function badgeEstado(estado) {
   if (estado === "liberado") return <span className="badge badge-success">Liberado</span>;
   if (estado === "no_liberado") return <span className="badge badge-alert">No liberado</span>;
@@ -2204,7 +2067,6 @@ function ReportesView() {
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState("");
   const [consultado, setConsultado] = useState(false);
-  const [generandoPdf, setGenerandoPdf] = useState(false);
   const [categoriaExpandida, setCategoriaExpandida] = useState(null);
   const [generandoPdfCategoria, setGenerandoPdfCategoria] = useState(false);
 
@@ -2258,18 +2120,6 @@ function ReportesView() {
   const noLiberadas = visitas.filter((v) => v.estado === "no_liberado").length;
   const enCurso = visitas.filter((v) => v.estado === "en_curso").length;
   const guiasNoLiberados = visitas.filter((v) => v.estado === "no_liberado");
-
-  async function descargarPdf() {
-    setGenerandoPdf(true);
-    try {
-      await generarPdfReporte({ desde, hasta, totalPersonas, totalVehiculos, liberadas, noLiberadas, guiasNoLiberados });
-    } catch (err) {
-      console.error(err);
-      setError("No se pudo generar el PDF. Probá de nuevo.");
-    } finally {
-      setGenerandoPdf(false);
-    }
-  }
 
   const CATEGORIAS = {
     personas: {
@@ -2344,12 +2194,6 @@ function ReportesView() {
 
       {consultado && (
         <React.Fragment>
-          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 14 }}>
-            <button className="btn btn-ghost" onClick={descargarPdf} disabled={generandoPdf}>
-              {generandoPdf ? "Generando PDF..." : "⬇ Descargar PDF"}
-            </button>
-          </div>
-
           <div className="stat-grid">
             <div
               className="stat-card"
@@ -3091,7 +2935,7 @@ function Shell({ perfil }) {
             </div>
           </div>
           <button className="link-muted" onClick={() => auth.signOut()}>Cerrar sesión</button>
-          <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.6</div>
+          <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.7</div>
         </div>
       </aside>
 
