@@ -268,7 +268,7 @@ function PanelInicio({ perfil }) {
       </div>
 
       <div className="ticket">
-        <div className="ticket-stub">v1.5</div>
+        <div className="ticket-stub">v1.6</div>
         <div className="ticket-perforation"></div>
         <div className="ticket-body">
           <h2 style={{ fontSize: 16, marginBottom: 6 }}>Versión estable</h2>
@@ -2079,6 +2079,123 @@ async function generarPdfReporte({ desde, hasta, totalPersonas, totalVehiculos, 
   doc.save(`reporte-actividad-${desde}-a-${hasta}.pdf`);
 }
 
+function badgeEstado(estado) {
+  if (estado === "liberado") return <span className="badge badge-success">Liberado</span>;
+  if (estado === "no_liberado") return <span className="badge badge-alert">No liberado</span>;
+  return <span className="badge badge-muted">En curso</span>;
+}
+
+async function generarPdfDetalleCategoria({ desde, hasta, titulo, filas, totalTexto }) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  const margen = 15;
+  const anchoUtil = 210 - margen * 2;
+  let y = margen;
+
+  const logo = await obtenerLogoParaPdf();
+
+  if (logo) {
+    try {
+      doc.addImage(logo.dataUrl, logo.formato, margen, y, 16, 16);
+    } catch (err) {
+      console.warn("No se pudo incrustar el logo en el PDF:", err);
+    }
+  }
+  const xTexto = logo ? margen + 20 : margen;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(16);
+  doc.text("SHOPPING PARIS", xTexto, y + 7);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  doc.text(titulo, xTexto, y + 13);
+  y += 22;
+
+  doc.setFontSize(9);
+  doc.setTextColor(100);
+  doc.text(`Período: ${desde} a ${hasta}`, margen, y);
+  doc.text(`Emitido: ${new Date().toLocaleString("es-PY")}`, 210 - margen, y, { align: "right" });
+  doc.setTextColor(0);
+  y += 5;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.text(totalTexto, margen, y);
+  doc.setFont("helvetica", "normal");
+  y += 5;
+  doc.setLineWidth(0.3);
+  doc.line(margen, y, 210 - margen, y);
+  y += 8;
+
+  const columnas = [
+    { titulo: "Fecha", ancho: 24 },
+    { titulo: "Guía", ancho: 34 },
+    { titulo: "Empresa", ancho: 30 },
+    { titulo: "Vehículo", ancho: 30 },
+    { titulo: "Pas.", ancho: 12 },
+    { titulo: "Ticket", ancho: 24 },
+    { titulo: "Estado", ancho: 26 }
+  ];
+
+  function dibujarEncabezadoTabla() {
+    doc.setFillColor(230, 225, 210);
+    doc.rect(margen, y - 4.5, anchoUtil, 6.5, "F");
+    let x = margen + 1.5;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.5);
+    doc.setTextColor(60);
+    columnas.forEach((c) => {
+      doc.text(c.titulo, x, y);
+      x += c.ancho;
+    });
+    doc.setTextColor(0);
+    y += 6;
+  }
+
+  const ESTADO_LABEL = { liberado: "Liberado", no_liberado: "No liberado", en_curso: "En curso" };
+
+  if (filas.length === 0) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(120);
+    doc.text("Sin registros en esta categoría para el período consultado.", margen, y);
+    doc.setTextColor(0);
+  } else {
+    dibujarEncabezadoTabla();
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.5);
+
+    filas.forEach((v, i) => {
+      if (y > 297 - margen - 10) {
+        doc.addPage();
+        y = margen + 5;
+        dibujarEncabezadoTabla();
+      }
+      if (i % 2 === 1) {
+        doc.setFillColor(247, 245, 241);
+        doc.rect(margen, y - 4, anchoUtil, 5.5, "F");
+      }
+      const fila = [
+        formatearFechaHora(v.fechaHoraIngreso),
+        v.guiaNombre || "",
+        v.empresaNombre || "",
+        `${v.vehiculoTipoNombre || ""} ${v.chapa || ""}`,
+        String(v.cantPasajeros ?? ""),
+        v.ticketEstacionamiento || "",
+        ESTADO_LABEL[v.estado] || v.estado || ""
+      ];
+      let x = margen + 1.5;
+      fila.forEach((valor, idx) => {
+        const maxChars = Math.floor(columnas[idx].ancho / 1.7);
+        const texto = String(valor).length > maxChars ? String(valor).slice(0, maxChars - 1) + "…" : String(valor);
+        doc.text(texto, x, y);
+        x += columnas[idx].ancho;
+      });
+      y += 5.5;
+    });
+  }
+
+  doc.save(`detalle-${titulo.toLowerCase().replace(/\s+/g, "-")}-${desde}-a-${hasta}.pdf`);
+}
+
 function ReportesView() {
   const hoy = new Date();
   const [desde, setDesde] = useState(fechaISO(hoy));
@@ -2088,6 +2205,8 @@ function ReportesView() {
   const [error, setError] = useState("");
   const [consultado, setConsultado] = useState(false);
   const [generandoPdf, setGenerandoPdf] = useState(false);
+  const [categoriaExpandida, setCategoriaExpandida] = useState(null);
+  const [generandoPdfCategoria, setGenerandoPdfCategoria] = useState(false);
 
   async function consultar(e) {
     if (e) e.preventDefault();
@@ -2152,6 +2271,42 @@ function ReportesView() {
     }
   }
 
+  const CATEGORIAS = {
+    personas: {
+      titulo: "Detalle — Personas ingresadas",
+      filas: visitas,
+      totalTexto: `Total de personas ingresadas: ${totalPersonas}`
+    },
+    vehiculos: {
+      titulo: "Detalle — Vehículos ingresados",
+      filas: visitas,
+      totalTexto: `Total de vehículos ingresados: ${totalVehiculos}`
+    },
+    liberados: {
+      titulo: "Detalle — Liberados",
+      filas: visitas.filter((v) => v.estado === "liberado"),
+      totalTexto: `Total liberados: ${liberadas}`
+    },
+    no_liberados: {
+      titulo: "Detalle — No liberados",
+      filas: guiasNoLiberados,
+      totalTexto: `Total no liberados: ${noLiberadas}`
+    }
+  };
+
+  async function descargarPdfCategoria(clave) {
+    const cat = CATEGORIAS[clave];
+    setGenerandoPdfCategoria(true);
+    try {
+      await generarPdfDetalleCategoria({ desde, hasta, titulo: cat.titulo, filas: cat.filas, totalTexto: cat.totalTexto });
+    } catch (err) {
+      console.error(err);
+      setError("No se pudo generar el PDF. Probá de nuevo.");
+    } finally {
+      setGenerandoPdfCategoria(false);
+    }
+  }
+
   return (
     <div>
       <div className="page-header">
@@ -2196,20 +2351,44 @@ function ReportesView() {
           </div>
 
           <div className="stat-grid">
-            <div className="stat-card">
-              <div className="stat-label">Personas ingresadas</div>
+            <div
+              className="stat-card"
+              role="button"
+              tabIndex={0}
+              onClick={() => setCategoriaExpandida(categoriaExpandida === "personas" ? null : "personas")}
+              style={{ cursor: "pointer", borderColor: categoriaExpandida === "personas" ? "var(--gold)" : "var(--line)" }}
+            >
+              <div className="stat-label">Personas ingresadas {categoriaExpandida === "personas" ? "▲" : "▼"}</div>
               <div className="stat-value">{totalPersonas}</div>
             </div>
-            <div className="stat-card">
-              <div className="stat-label">Vehículos ingresados</div>
+            <div
+              className="stat-card"
+              role="button"
+              tabIndex={0}
+              onClick={() => setCategoriaExpandida(categoriaExpandida === "vehiculos" ? null : "vehiculos")}
+              style={{ cursor: "pointer", borderColor: categoriaExpandida === "vehiculos" ? "var(--gold)" : "var(--line)" }}
+            >
+              <div className="stat-label">Vehículos ingresados {categoriaExpandida === "vehiculos" ? "▲" : "▼"}</div>
               <div className="stat-value">{totalVehiculos}</div>
             </div>
-            <div className="stat-card">
-              <div className="stat-label">Liberados</div>
+            <div
+              className="stat-card"
+              role="button"
+              tabIndex={0}
+              onClick={() => setCategoriaExpandida(categoriaExpandida === "liberados" ? null : "liberados")}
+              style={{ cursor: "pointer", borderColor: categoriaExpandida === "liberados" ? "var(--gold)" : "var(--line)" }}
+            >
+              <div className="stat-label">Liberados {categoriaExpandida === "liberados" ? "▲" : "▼"}</div>
               <div className="stat-value" style={{ color: "var(--success)" }}>{liberadas}</div>
             </div>
-            <div className="stat-card">
-              <div className="stat-label">No liberados</div>
+            <div
+              className="stat-card"
+              role="button"
+              tabIndex={0}
+              onClick={() => setCategoriaExpandida(categoriaExpandida === "no_liberados" ? null : "no_liberados")}
+              style={{ cursor: "pointer", borderColor: categoriaExpandida === "no_liberados" ? "var(--gold)" : "var(--line)" }}
+            >
+              <div className="stat-label">No liberados {categoriaExpandida === "no_liberados" ? "▲" : "▼"}</div>
               <div className="stat-value" style={{ color: "var(--alert)" }}>{noLiberadas}</div>
             </div>
           </div>
@@ -2220,46 +2399,53 @@ function ReportesView() {
             </p>
           )}
 
-          <div className="panel">
-            <div className="panel-header">
-              <h2>Guías no liberados</h2>
-              <span className="badge badge-alert">{guiasNoLiberados.length}</span>
-            </div>
-            <div className="panel-body" style={{ padding: 0 }}>
-              {guiasNoLiberados.length === 0 ? (
-                <div className="empty-state">
-                  <div className="display">No hubo visitas sin liberar en este período</div>
+          {categoriaExpandida && (
+            <div className="panel">
+              <div className="panel-header">
+                <h2>{CATEGORIAS[categoriaExpandida].titulo}</h2>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span className="badge badge-gold">{CATEGORIAS[categoriaExpandida].filas.length}</span>
+                  <button className="btn btn-ghost" onClick={() => descargarPdfCategoria(categoriaExpandida)} disabled={generandoPdfCategoria}>
+                    {generandoPdfCategoria ? "Generando..." : "⬇ Descargar PDF"}
+                  </button>
                 </div>
-              ) : (
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Fecha</th>
-                      <th>Guía</th>
-                      <th>Empresa</th>
-                      <th>Vehículo</th>
-                      <th>Pasajeros</th>
-                      <th>Monto / Mínimo</th>
-                      <th>Faltó</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {guiasNoLiberados.map((v) => (
-                      <tr key={v.id}>
-                        <td>{formatearFechaHora(v.fechaHoraIngreso)}</td>
-                        <td>{v.guiaNombre}</td>
-                        <td>{v.empresaNombre}</td>
-                        <td>{v.vehiculoTipoNombre} · {v.chapa}</td>
-                        <td>{v.cantPasajeros}</td>
-                        <td>$ {Number(v.montoAcumulado || 0).toLocaleString("es-AR")} / $ {Number(v.montoMinimoRequerido || 0).toLocaleString("es-AR")}</td>
-                        <td>$ {Math.max(0, (v.montoMinimoRequerido || 0) - (v.montoAcumulado || 0)).toLocaleString("es-AR")}</td>
+              </div>
+              <div className="panel-body" style={{ padding: 0 }}>
+                {CATEGORIAS[categoriaExpandida].filas.length === 0 ? (
+                  <div className="empty-state">
+                    <div className="display">Sin registros en esta categoría</div>
+                  </div>
+                ) : (
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Fecha</th>
+                        <th>Guía</th>
+                        <th>Empresa</th>
+                        <th>Vehículo</th>
+                        <th>Pasajeros</th>
+                        <th>Ticket</th>
+                        <th>Estado</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
+                    </thead>
+                    <tbody>
+                      {CATEGORIAS[categoriaExpandida].filas.map((v) => (
+                        <tr key={v.id}>
+                          <td>{formatearFechaHora(v.fechaHoraIngreso)}</td>
+                          <td>{v.guiaNombre}</td>
+                          <td>{v.empresaNombre}</td>
+                          <td>{v.vehiculoTipoNombre} · {v.chapa}</td>
+                          <td>{v.cantPasajeros}</td>
+                          <td>{v.ticketEstacionamiento}</td>
+                          <td>{badgeEstado(v.estado)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
             </div>
-          </div>
+          )}
         </React.Fragment>
       )}
     </div>
@@ -2905,7 +3091,7 @@ function Shell({ perfil }) {
             </div>
           </div>
           <button className="link-muted" onClick={() => auth.signOut()}>Cerrar sesión</button>
-          <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.5</div>
+          <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.6</div>
         </div>
       </aside>
 

@@ -2,6 +2,14 @@
 
 Versionado simplificado `vMAJOR.MINOR`. MAJOR = cambios de arquitectura o que rompen datos existentes. MINOR = funcionalidad nueva incremental.
 
+## v1.6 — 2026-08-11
+
+Detalle desplegable en Reportes.
+
+- Las 4 tarjetas de resumen (Personas ingresadas, Vehículos ingresados, Liberados, No liberados) ahora son clickeables: al tocarlas, despliegan una tabla con el detalle de las visitas que componen ese número.
+- Cada detalle desplegado tiene su propio botón "⬇ Descargar PDF", con el total de esa categoría indicado en el encabezado del PDF.
+- Reemplaza la tabla fija de "Guías no liberados" (ahora es una de las cuatro categorías desplegables, junto a las otras).
+
 ## v1.5 — 2026-08-11
 
 Exportación de Reportes a PDF.
