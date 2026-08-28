@@ -2,6 +2,13 @@
 
 Versionado simplificado `vMAJOR.MINOR`. MAJOR = cambios de arquitectura o que rompen datos existentes. MINOR = funcionalidad nueva incremental.
 
+## v1.5 — 2026-08-11
+
+Exportación de Reportes a PDF.
+
+- Nuevo botón "⬇ Descargar PDF" en la pantalla de Reportes: genera un PDF en A4 con el resumen del período (personas ingresadas, vehículos, liberados, no liberados) y la tabla completa de "Guías no liberados", con salto de página automático si la tabla es larga.
+- Incluye logo del shopping (si está configurado) y el rango de fechas consultado.
+
 ## v1.4 — 2026-08-05
 
 Edición de visitas en curso.
