@@ -2,88 +2,33 @@
 
 Versionado simplificado `vMAJOR.MINOR`. MAJOR = cambios de arquitectura o que rompen datos existentes. MINOR = funcionalidad nueva incremental.
 
-## v1.10 — 2026-08-25
+## v1.4 — 2026-08-05
 
-Numeración secuencial en liberaciones y permisos de salida, sin código de barras.
+Edición de visitas en curso.
 
-- **Liberaciones**: cada ticket impreso ahora incluye un **N° de Liberación** correlativo (000001, 000002, ...), asignado con un contador atómico en Firestore (colección `contadores`, documento `liberaciones`) — nunca se repite ni salta, incluso si dos operadores liberan casi al mismo tiempo. El número se guarda en el registro de la visita (`numeroLiberacion`) y se conserva correctamente al reimprimir desde "🖨️ Reimprimir último ticket".
-- **Permisos de salida**: mismo mecanismo, con un contador independiente (documento `permisosSalida`) y un **N° de Permiso** propio en el ticket.
-- Se **quitó el código de barras** de ambos tickets (liberación y permiso de salida) — queda solo el N° de ticket de estacionamiento en texto.
-- El comprobante de liberación ahora también incluye, al final, un espacio para la **firma del operador** que emite el ticket (el permiso de salida ya tenía las firmas de guía y autorizante local).
+- Ícono de lápiz junto al nombre del guía en cada tarjeta de "Visitas en curso", para corregir cualquier dato cargado por error (guía, empresa, pasajeros, tipo de vehículo, chapa, ticket) sin tener que anular y recargar toda la visita.
+- Si se cambia el tipo de vehículo, el monto mínimo requerido se recalcula automáticamente; el monto ya acumulado en compras no se toca.
 
-## v1.9 — 2026-08-25
+## v1.3 — 2026-08-05
 
-Totales al pie de los reportes detallados.
+Renovación de ticket al reingresar.
 
-- Los 4 reportes desplegables de "Actividad por período" (v1.6) ahora muestran una fila de **totales** al final, tanto en pantalla como al pie del PDF descargado:
-  - **Vehículos ingresados / Liberados**: Total de Guías, Total de Empresas, Total de Vehículos, Total de Tickets, Total de Monto acumulado (todos contando valores únicos donde corresponde — por ejemplo, una empresa que aparece en varias filas cuenta una sola vez).
-  - **No liberados**: los mismos totales, más el Total acumulado y el Total faltante (suma de lo que le faltó a cada uno para llegar al mínimo).
-  - **Personas ingresadas por guía**: Total de Guías, Total de Empresas, Total de Visitas y Total de Pasajeros.
+- Al "quitar" el permiso de salida, ahora se abre una ventana pidiendo el **nuevo número de ticket** que le dieron al guía al volver a entrar (en vez de sacar el permiso directo).
+- El N° de ticket de la visita se actualiza con el valor nuevo, para que el ticket que figure en el PDF de liberación final y en los reportes sea siempre el correcto.
 
-## v1.8 — 2026-08-25
+## v1.2 — 2026-08-05
 
-Menú lateral replegable + columna Empresa en el Ranking.
+Permiso de salida.
 
-- Nuevo botón (« / ») en la parte superior del menú lateral para replegarlo a una barra angosta de solo íconos (usa los íconos que ya tenía definidos cada sección, antes sin usar) o volver a expandirlo. La preferencia se recuerda entre sesiones (`localStorage`).
-- La tabla de "Ranking de guías" ahora incluye la columna **Empresa**, igual que ya se mostraba en el reporte de "Vehículos ingresados".
+- Nuevo botón "Otorgar permiso de salida" en cada tarjeta de "Visitas en curso": marca el vehículo como autorizado a salir y reingresar sin cerrar la visita ni liberar el estacionamiento. No requiere motivo.
+- Mientras está activo, la tarjeta muestra la etiqueta "🚗 Permiso de salida otorgado".
+- Al otorgarlo, se descarga automáticamente un PDF con el permiso (guía, empresa, vehículo/chapa, N° de ticket, quién lo otorgó y cuándo) para mostrar en la salida del estacionamiento.
 
-## v1.7 — 2026-08-25
+## v1.1 — 2026-08-05
 
-Ajuste de tamaño del modal de reportes detallados.
+Optimización del PDF de liberación.
 
-- El modal de "Ver detalle" en Reportes (v1.6) quedaba angosto para tablas con muchas columnas (ej. "Vehículos ingresados" con 8 columnas) — se veían cortadas y era confuso navegar. El componente `Modal` ahora acepta un ancho personalizado, y este reporte en particular usa uno más amplio (1100px) con scroll horizontal interno cuando hace falta, sin afectar el tamaño de los demás modales del sistema.
-
-## v1.6 — 2026-08-25
-
-Reportes detallados con exportación a PDF.
-
-- Las 4 tarjetas de "Actividad por período" en Reportes (Personas ingresadas, Vehículos ingresados, Liberados, No liberados) ahora son clickeables. Cada una abre un modal con el detalle completo del período consultado:
-  - **Personas ingresadas** → agrupado por guía, con cantidad de visitas y total de pasajeros por guía.
-  - **Vehículos ingresados** → listado completo con fecha, guía, empresa, vehículo, chapa, pasajeros, ticket y estado.
-  - **Liberados** → listado con fecha de ingreso/salida, guía, empresa, vehículo, ticket y monto acumulado.
-  - **No liberados** → mismo detalle que ya tenía la tabla "Guías no liberados" más abajo, ahora también accesible desde la tarjeta.
-- Cada modal tiene un botón **"Descargar PDF"** que genera el reporte tabulado (usando el plugin `jspdf-autotable`, agregado al proyecto) con encabezado, período consultado y cantidad de registros.
-
-## v1.5 — 2026-08-25
-
-Reordenamiento de botones en las tarjetas de "Visitas en curso".
-
-- Con el botón "Partner" agregado en v1.4, la fila de 3 botones ("Registrar compra" / "Partner" / "✕") quedaba apretada y el de anular se cortaba en tarjetas angostas. Ahora "Registrar compra" / "Liberar estacionamiento" ocupa una fila propia (ancho completo), y "Partner" + "Anular visita" van debajo en una segunda fila. El botón de anular ahora dice "✕ Anular visita" (antes solo el ícono) para que sea más claro qué hace.
-
-## v1.4 — 2026-08-25
-
-Buscador de guías + liberación Partner sin monto mínimo.
-
-- **Buscador** por nombre de guía en "Visitas en curso", junto al título — filtra la grilla de tarjetas a medida que se escribe, para no tener que recorrerlas todas cuando hay muchas visitas activas.
-- Nuevo botón **"Partner"** en cada tarjeta (visible cuando todavía no se alcanzó el monto mínimo): permite liberar el estacionamiento sin exigir compra, para las empresas que son tiendas Partner del shopping. Abre el mismo modal de liberación, pero con un aviso claro y sin el formulario de carga de monto. Se guarda `liberadoComoPartner: true` en el registro, y el ticket impreso muestra "Liberación: PARTNER (sin monto mínimo)" en vez de la línea de monto acumulado.
-
-## v1.3 — 2026-08-25
-
-Correcciones al ticket de permiso de salida.
-
-- El ticket de permiso de salida ahora imprime el **código de barras** (CODE128) debajo del N° de ticket de estacionamiento — se había agregado en el comprobante de liberación pero faltaba en este.
-- El campo **"Autorizado por local"** ahora se guarda e imprime siempre en **mayúsculas** (se convierte a medida que se escribe, igual que la chapa del vehículo).
-
-## v1.2 — 2026-08-25
-
-Correcciones y mejoras al flujo de impresión + carga manual de datos.
-
-- Corregido: al reimprimir un ticket desde "🖨️ Reimprimir último ticket", la fecha de ingreso aparecía como "Invalid Date" y la permanencia como "NaN min" — el Timestamp de Firestore pierde su método `.toDate()` al guardarse y recuperarse de `localStorage` vía JSON. Ahora `formatearFechaHora` y `tiempoTranscurrido` reconocen también ese formato "aplanado" (nueva función `aFechaJS`).
-- En "Nuevo ingreso", la **hora de ingreso** ahora se carga a mano (junto al N° de ticket), en vez de tomarse automáticamente del momento en que se registra el formulario — útil cuando el guía entró un rato antes de que se cargue el ingreso en el sistema. Se precarga con la hora actual y se puede editar antes de guardar.
-- **Permiso de salida**: ahora, antes de generar el ticket, se abre un modal para cargar el **motivo de la salida** (checklist: Buscar pasajero / Entregar mercaderías-pedidos / Asuntos administrativos / Taller mecánico-mantenimiento, más un campo de texto libre "Otro motivo" sin checkbox) y el campo obligatorio **"Autorizado por local"**.
-- El permiso de salida **ya no se genera como PDF**: imprime **directo por la ticketera** (2 copias — "COPIA: GUÍA" y "COPIA: LOCAL"), igual que el comprobante de liberación, incluyendo espacio en blanco al final para firmar a mano (guía y autorizante del local). Si falla la impresión, igual que en la liberación: el permiso queda otorgado en la base, se muestra el error, y el botón cambia a "Reintentar impresión". La función de PDF (`generarPdfPermisoSalida`) queda en el código sin usarse, por si hace falta como referencia.
-
-## v1.1 — 2026-08-24
-
-Impresión directa del comprobante de liberación (impresora térmica).
-
-- El botón "Liberar estacionamiento y emitir ticket" ya no descarga un PDF: imprime **directo** en la impresora térmica del punto de cobro (Epson TM-T20IV-L, conectada por USB a la misma PC de la sala de guías y compartida como impresora de Windows), vía un servidor local ("print-bridge") que corre en esa PC. Ver carpeta `print-bridge/` y `SISTEMA-DE-IMPRESION.md`.
-- Se imprimen **2 copias separadas** (corte de papel entre una y otra): "COPIA: GUÍA" y "COPIA: SHOPPING", cada una con el mismo contenido que antes tenía el PDF (guía, empresa, vehículo/chapa, N° de ticket, ingreso, salida, permanencia, monto acumulado) más el logo del shopping.
-- Nuevo: **código de barras real** (CODE128) del N° de ticket, impreso por la propia impresora (no como imagen).
-- Si el servidor de impresión no responde (PC apagada, servidor no iniciado, impresora compartida no accesible, etc.): el estacionamiento igual queda liberado en la base, se muestra un aviso claro, y el botón cambia a "Reintentar impresión" sin volver a tocar el registro.
-- Nuevo botón **"🖨️ Reimprimir último ticket"** en "Visitas en curso", disponible por unas horas después de cada liberación, por si hace falta reimprimir más tarde.
-- La generación de PDF (`generarPdfLiberacion`) queda en el código sin usarse en este flujo, por si se necesita como referencia o respaldo a futuro.
-- `print-server.js` manda los comandos ESC/POS a la impresora copiando un archivo binario directo a su ruta de impresora compartida por Windows en la misma PC (`\\192.168.58.11\guiaticket`), en vez de un socket TCP directo — la impresora es USB (no de red), así que este es el mecanismo que funciona.
+- El ticket de liberación ahora imprime **dos copias en una sola hoja**: "ORIGINAL" arriba y "COPIA — PARA EL GUÍA" abajo, separadas por una línea de corte punteada. Reduce el uso de papel a la mitad respecto de imprimir cada copia por separado.
 
 ## v1.0 — 2026-07-18
 
