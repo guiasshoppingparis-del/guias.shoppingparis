@@ -2,6 +2,12 @@
 
 Versionado simplificado `vMAJOR.MINOR`. MAJOR = cambios de arquitectura o que rompen datos existentes. MINOR = funcionalidad nueva incremental.
 
+## v1.12 — 2026-08-26
+
+Desglose por tipo de vehículo en los reportes.
+
+- Los reportes de **Vehículos ingresados**, **Liberados** y **No liberados** ahora muestran, debajo de los totales, un desglose **"Por tipo de vehículo"** con la cantidad de cada tipo (ej. AUTO: 30, VAN: 15, BUS: 5), ordenado de mayor a menor. Aparece tanto en pantalla (como chips) como al pie del PDF descargado.
+
 ## v1.11 — 2026-08-26
 
 Calendario de afluencia por fecha exacta en "Mapa de calor".

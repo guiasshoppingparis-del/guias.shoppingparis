@@ -268,7 +268,7 @@ function PanelInicio({ perfil }) {
       </div>
 
       <div className="ticket">
-        <div className="ticket-stub">v1.11</div>
+        <div className="ticket-stub">v1.12</div>
         <div className="ticket-perforation"></div>
         <div className="ticket-body">
           <h2 style={{ fontSize: 16, marginBottom: 6 }}>Versión estable</h2>
@@ -2280,6 +2280,20 @@ function contarUnicos(datos, campo) {
   return new Set(datos.map((d) => d[campo]).filter((v) => v !== undefined && v !== null && v !== "")).size;
 }
 
+// Agrupa y cuenta cuántas filas hay por cada valor de un campo (ej. tipo de
+// vehículo), de mayor a menor cantidad. Usado para el desglose "Por tipo de
+// vehículo" en los reportes.
+function contarPorCampo(datos, campo) {
+  const mapa = {};
+  datos.forEach((d) => {
+    const key = d[campo] || "(sin especificar)";
+    mapa[key] = (mapa[key] || 0) + 1;
+  });
+  return Object.entries(mapa)
+    .map(([valor, cantidad]) => ({ valor, cantidad }))
+    .sort((a, b) => b.cantidad - a.cantidad);
+}
+
 // Agrupa las visitas por guía para el reporte de "personas ingresadas por guía".
 function agruparPersonasPorGuia(visitas) {
   const mapa = new Map();
@@ -2330,7 +2344,8 @@ const REPORTES_DETALLE_CONFIG = {
       { label: "Total de Vehículos", valor: datos.length },
       { label: "Total de Tickets", valor: contarUnicos(datos, "ticketEstacionamiento") },
       { label: "Total de Monto acumulado", valor: `$ ${datos.reduce((acc, v) => acc + (Number(v.montoAcumulado) || 0), 0).toLocaleString("es-AR")}` }
-    ]
+    ],
+    desglose: (datos) => ({ titulo: "Por tipo de vehículo", filas: contarPorCampo(datos, "vehiculoTipoNombre") })
   },
   liberados: {
     titulo: "Vehículos liberados",
@@ -2351,7 +2366,8 @@ const REPORTES_DETALLE_CONFIG = {
       { label: "Total de Vehículos", valor: datos.length },
       { label: "Total de Tickets", valor: contarUnicos(datos, "ticketEstacionamiento") },
       { label: "Total de Monto acumulado", valor: `$ ${datos.reduce((acc, v) => acc + (Number(v.montoAcumulado) || 0), 0).toLocaleString("es-AR")}` }
-    ]
+    ],
+    desglose: (datos) => ({ titulo: "Por tipo de vehículo", filas: contarPorCampo(datos, "vehiculoTipoNombre") })
   },
   no_liberados: {
     titulo: "Vehículos no liberados",
@@ -2373,7 +2389,8 @@ const REPORTES_DETALLE_CONFIG = {
       { label: "Total de Tickets", valor: contarUnicos(datos, "ticketEstacionamiento") },
       { label: "Total acumulado", valor: `$ ${datos.reduce((acc, v) => acc + (Number(v.montoAcumulado) || 0), 0).toLocaleString("es-AR")}` },
       { label: "Total faltante", valor: `$ ${datos.reduce((acc, v) => acc + Math.max(0, (v.montoMinimoRequerido || 0) - (v.montoAcumulado || 0)), 0).toLocaleString("es-AR")}` }
-    ]
+    ],
+    desglose: (datos) => ({ titulo: "Por tipo de vehículo", filas: contarPorCampo(datos, "vehiculoTipoNombre") })
   }
 };
 
@@ -2382,6 +2399,7 @@ function ModalReporteDetalle({ tipo, visitas, desde, hasta, onClose }) {
   const datos = config.datos(visitas);
   const filas = config.filas(datos);
   const totales = config.totales ? config.totales(datos) : [];
+  const desglose = config.desglose ? config.desglose(datos) : null;
 
   function descargarPDF() {
     const { jsPDF } = window.jspdf;
@@ -2403,9 +2421,10 @@ function ModalReporteDetalle({ tipo, visitas, desde, hasta, onClose }) {
       alternateRowStyles: { fillColor: [245, 243, 237] }
     });
 
+    let y = doc.lastAutoTable.finalY + 10;
+    const alturaPagina = doc.internal.pageSize.getHeight();
+
     if (totales.length > 0) {
-      let y = doc.lastAutoTable.finalY + 10;
-      const alturaPagina = doc.internal.pageSize.getHeight();
       if (y > alturaPagina - 20) {
         doc.addPage();
         y = 20;
@@ -2418,6 +2437,24 @@ function ModalReporteDetalle({ tipo, visitas, desde, hasta, onClose }) {
       doc.setFontSize(9);
       for (const t of totales) {
         doc.text(`${t.label}: ${t.valor}`, 14, y);
+        y += 6;
+      }
+    }
+
+    if (desglose && desglose.filas.length > 0) {
+      y += 4;
+      if (y > alturaPagina - 20) {
+        doc.addPage();
+        y = 20;
+      }
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.text(desglose.titulo, 14, y);
+      y += 6;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      for (const d of desglose.filas) {
+        doc.text(`${d.valor}: ${d.cantidad}`, 14, y);
         y += 6;
       }
     }
@@ -2475,6 +2512,31 @@ function ModalReporteDetalle({ tipo, visitas, desde, hasta, onClose }) {
               <div style={{ fontSize: 18, fontWeight: 700 }}>{t.valor}</div>
             </div>
           ))}
+        </div>
+      )}
+
+      {desglose && desglose.filas.length > 0 && (
+        <div style={{ marginBottom: 18 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>{desglose.titulo}</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {desglose.filas.map((d) => (
+              <div
+                key={d.valor}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "6px 12px",
+                  background: "var(--paper)",
+                  borderRadius: 20,
+                  fontSize: 13
+                }}
+              >
+                <span>{d.valor}</span>
+                <span className="badge badge-gold">{d.cantidad}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -3501,7 +3563,7 @@ function Shell({ perfil }) {
             {sidebarColapsado ? "⏻" : "Cerrar sesión"}
           </button>
           {!sidebarColapsado && (
-            <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.11</div>
+            <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.12</div>
           )}
         </div>
       </aside>
