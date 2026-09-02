@@ -1,98 +1,77 @@
 rules_version = '2';
-
-// Reglas de seguridad — Sistema de Gestión de Visitas — Shopping Paris (v0.1)
+// Reglas de seguridad — Sistema de Gestión de Visitas — Shopping Paris (v0.2)
 // Pegar en: Firebase Console > Firestore Database > Reglas
-
 service cloud.firestore {
   match /databases/{database}/documents {
-
     function estaLogueado() {
       return request.auth != null;
     }
-
     function miPerfil() {
       return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data;
     }
-
     function tienePermiso(permiso) {
       let rol = get(/databases/$(database)/documents/roles/$(miPerfil().rolId)).data;
       return permiso in rol.permisos;
     }
-
     match /usuarios/{usuarioId} {
       allow read: if estaLogueado();
-
       // Bootstrap: el primer administrador puede crear su propio documento
       // (todavía no existe ningún usuario en el sistema).
       allow create: if estaLogueado()
         && usuarioId == request.auth.uid
         && !exists(/databases/$(database)/documents/usuarios/$(request.auth.uid))
         && request.resource.data.rolId == 'admin';
-
       // Altas posteriores: solo un usuario con permiso "gestionar_usuarios".
       allow create: if estaLogueado() && tienePermiso('gestionar_usuarios');
-
       // Nota: el usuario NO puede editar su propio documento sin el permiso
       // "gestionar_usuarios" — si pudiera, podría auto-asignarse otro rol.
       allow update: if estaLogueado() && tienePermiso('gestionar_usuarios');
-
       allow delete: if estaLogueado() && tienePermiso('gestionar_usuarios');
     }
-
     match /roles/{rolId} {
       allow read: if estaLogueado();
       // Bootstrap: permite crear los roles semilla si todavía no hay ningún usuario.
       allow create: if estaLogueado() && !exists(/databases/$(database)/documents/usuarios/$(request.auth.uid));
       allow write: if estaLogueado() && tienePermiso('gestionar_usuarios');
     }
-
     match /empresas/{empresaId} {
       allow read: if estaLogueado();
       allow write: if estaLogueado() && tienePermiso('gestionar_catalogos');
     }
-
     match /tiposVehiculo/{tipoId} {
       allow read: if estaLogueado();
       allow write: if estaLogueado() && tienePermiso('gestionar_catalogos');
     }
-
     match /guias/{guiaId} {
       allow read: if estaLogueado();
       allow write: if estaLogueado() && tienePermiso('registrar_visitas');
     }
-
     match /visitas/{visitaId} {
       allow read: if estaLogueado();
       allow create: if estaLogueado() && tienePermiso('registrar_visitas');
       allow update: if estaLogueado()
         && (tienePermiso('registrar_visitas') || tienePermiso('liberar_estacionamiento'));
-      // Anular una visita cargada por error: mismo permiso que la crea.
-      allow delete: if estaLogueado()
-        && (tienePermiso('registrar_visitas') || tienePermiso('gestionar_usuarios'));
+      allow delete: if estaLogueado() && tienePermiso('gestionar_usuarios');
     }
-
-    // Módulo Paris Store: carga básica de datos desde un punto distinto a la
-    // sala de guías, sin manejo de estacionamiento ni impresión de tickets.
-    match /registrosParisStore/{registroId} {
+    // Contadores atómicos para la numeración secuencial de liberaciones
+    // (contadores/liberaciones) y permisos de salida (contadores/permisosSalida).
+    // Mismo criterio de permisos que /visitas, ya que ambas acciones terminan
+    // actualizando un documento de esa colección en la misma transacción.
+    match /contadores/{contadorId} {
       allow read: if estaLogueado();
-      allow create: if estaLogueado() && tienePermiso('registrar_visitas');
-      allow update: if estaLogueado() && tienePermiso('registrar_visitas');
-      allow delete: if estaLogueado()
-        && (tienePermiso('registrar_visitas') || tienePermiso('gestionar_usuarios'));
+      allow write: if estaLogueado()
+        && (tienePermiso('registrar_visitas') || tienePermiso('liberar_estacionamiento'));
     }
-
     match /config/{docId} {
       // Lectura pública: la app necesita saber si falta el setup inicial
       // (config/meta) y el logo (config/branding) antes de que haya login.
       allow read: if true;
-
       // Bootstrap: permite crear config/meta durante el alta del primer Admin,
       // en la ventana en la que ya tiene sesión pero todavía no tiene su
       // documento en /usuarios.
       allow create: if estaLogueado()
         && docId == 'meta'
         && !exists(/databases/$(database)/documents/usuarios/$(request.auth.uid));
-
       allow write: if estaLogueado() && tienePermiso('gestionar_catalogos');
     }
   }

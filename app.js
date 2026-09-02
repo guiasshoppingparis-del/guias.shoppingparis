@@ -194,10 +194,10 @@ function Login() {
 // Modal genérico
 // ---------------------------------------------------------------------------
 
-function Modal({ titulo, onClose, children, footer }) {
+function Modal({ titulo, onClose, children, footer, ancho }) {
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal">
+      <div className="modal" style={ancho ? { maxWidth: ancho } : undefined}>
         <div className="modal-header">
           <h2>{titulo}</h2>
           <button className="icon-btn" onClick={onClose} aria-label="Cerrar">✕</button>
@@ -268,7 +268,7 @@ function PanelInicio({ perfil }) {
       </div>
 
       <div className="ticket">
-        <div className="ticket-stub">v1.8</div>
+        <div className="ticket-stub">v1.12</div>
         <div className="ticket-perforation"></div>
         <div className="ticket-body">
           <h2 style={{ fontSize: 16, marginBottom: 6 }}>Versión estable</h2>
@@ -616,9 +616,23 @@ function ModalRol({ rol, onClose, mostrarToast }) {
 // Vista: Visitas (ingreso de guías a la sala)
 // ---------------------------------------------------------------------------
 
+// Convierte a un objeto Date de JS un valor de fecha que puede venir en 3
+// formatos distintos: un Timestamp de Firestore "vivo" (con método .toDate),
+// el mismo Timestamp ya "aplanado" a {seconds, nanoseconds} — que es lo que
+// queda después de un JSON.stringify/parse, como al guardar en localStorage
+// para la reimpresión — o un valor común (string, número, Date). Devuelve
+// null si no se puede interpretar.
+function aFechaJS(fecha) {
+  if (!fecha) return null;
+  if (typeof fecha.toDate === "function") return fecha.toDate();
+  if (typeof fecha.seconds === "number") return new Date(fecha.seconds * 1000);
+  const d = new Date(fecha);
+  return isNaN(d.getTime()) ? null : d;
+}
+
 function tiempoTranscurrido(fecha) {
-  if (!fecha) return "—";
-  const inicio = fecha.toDate ? fecha.toDate() : new Date(fecha);
+  const inicio = aFechaJS(fecha);
+  if (!inicio) return "—";
   const minutos = Math.max(0, Math.floor((Date.now() - inicio.getTime()) / 60000));
   const h = Math.floor(minutos / 60);
   const m = minutos % 60;
@@ -631,9 +645,10 @@ function VisitasView({ perfil, mostrarToast }) {
   const [tiposVehiculo, setTiposVehiculo] = useState([]);
   const [visitasEnCurso, setVisitasEnCurso] = useState([]);
   const [visitaSeleccionada, setVisitaSeleccionada] = useState(null);
+  const [visitaParaPermiso, setVisitaParaPermiso] = useState(null);
+  const [modoPartner, setModoPartner] = useState(false);
+  const [busquedaGuia, setBusquedaGuia] = useState("");
   const [mostrarCierreDia, setMostrarCierreDia] = useState(false);
-  const [visitaParaReingreso, setVisitaParaReingreso] = useState(null);
-  const [visitaParaEditar, setVisitaParaEditar] = useState(null);
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
@@ -679,6 +694,29 @@ function VisitasView({ perfil, mostrarToast }) {
   }, []);
 
   const puedeLiberar = tienePermiso(perfil, "liberar_estacionamiento");
+  const [ultimoTicket, setUltimoTicket] = useState(null);
+  const [reimprimiendo, setReimprimiendo] = useState(false);
+
+  useEffect(() => {
+    setUltimoTicket(obtenerUltimoTicketLiberado());
+  }, []);
+
+  async function reimprimirUltimoTicket() {
+    if (!ultimoTicket) return;
+    setReimprimiendo(true);
+    const ok = await imprimirComprobanteLiberacion(
+      ultimoTicket.visita,
+      ultimoTicket.usuarioNombre,
+      ultimoTicket.visita.liberadoComoPartner,
+      ultimoTicket.visita.numeroLiberacion
+    );
+    setReimprimiendo(false);
+    mostrarToast(
+      ok
+        ? `Ticket reimpreso: ${ultimoTicket.visita.guiaNombre}`
+        : "No se pudo reimprimir. Revisá que el servidor de impresión esté encendido."
+    );
+  }
 
   async function anularVisita(v) {
     const confirmar = window.confirm(
@@ -694,20 +732,27 @@ function VisitasView({ perfil, mostrarToast }) {
     }
   }
 
-  async function otorgarPermisoSalida(v) {
+  // Otorgar el permiso ahora pasa por un modal (motivo + autorizante) antes de
+  // tocar Firestore y generar el PDF; acá solo queda la revocación directa.
+  async function revocarPermisoSalida(v) {
     try {
       await db.collection("visitas").doc(v.id).update({
-        permisoSalida: true,
-        permisoSalidaPor: perfil.nombre,
-        permisoSalidaFecha: firebase.firestore.FieldValue.serverTimestamp()
+        permisoSalida: false,
+        permisoSalidaPor: firebase.firestore.FieldValue.delete(),
+        permisoSalidaFecha: firebase.firestore.FieldValue.delete(),
+        motivosSalida: firebase.firestore.FieldValue.delete(),
+        autorizadoPorLocal: firebase.firestore.FieldValue.delete()
       });
-      await generarPdfPermisoSalida(v, perfil.nombre);
-      mostrarToast("Permiso de salida otorgado.");
+      mostrarToast("Permiso de salida retirado.");
     } catch (err) {
       console.error(err);
-      mostrarToast("No se pudo otorgar el permiso de salida.");
+      mostrarToast("No se pudo actualizar el permiso de salida.");
     }
   }
+
+  const visitasFiltradas = busquedaGuia.trim()
+    ? visitasEnCurso.filter((v) => (v.guiaNombre || "").toLowerCase().includes(busquedaGuia.trim().toLowerCase()))
+    : visitasEnCurso;
 
   return (
     <div>
@@ -728,10 +773,27 @@ function VisitasView({ perfil, mostrarToast }) {
       />
 
       <div style={{ marginTop: 32 }}>
-        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 14 }}>
-          <h2 style={{ fontSize: 18 }}>Visitas en curso</h2>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 14, flexWrap: "wrap" }}>
+          <h2 style={{ fontSize: 18, whiteSpace: "nowrap" }}>Visitas en curso</h2>
+          <input
+            type="text"
+            value={busquedaGuia}
+            onChange={(e) => setBusquedaGuia(e.target.value)}
+            placeholder="Buscar por nombre de guía..."
+            style={{ flex: "1 1 240px", maxWidth: 420, padding: "8px 12px", border: "1px solid var(--line)", borderRadius: 8 }}
+          />
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginLeft: "auto" }}>
             <span className="badge badge-gold">{visitasEnCurso.length}</span>
+            {puedeLiberar && ultimoTicket && (
+              <button
+                className="btn btn-ghost"
+                onClick={reimprimirUltimoTicket}
+                disabled={reimprimiendo}
+                title={`Último ticket liberado: ${ultimoTicket.visita.guiaNombre}`}
+              >
+                {reimprimiendo ? "Imprimiendo..." : "🖨️ Reimprimir último ticket"}
+              </button>
+            )}
             {tienePermiso(perfil, "registrar_visitas") && visitasEnCurso.length > 0 && (
               <button className="btn btn-ghost" onClick={() => setMostrarCierreDia(true)}>Cerrar día</button>
             )}
@@ -745,9 +807,16 @@ function VisitasView({ perfil, mostrarToast }) {
               <p>Los ingresos que registres van a aparecer acá.</p>
             </div>
           </div>
+        ) : visitasFiltradas.length === 0 ? (
+          <div className="panel">
+            <div className="empty-state">
+              <div className="display">Sin resultados</div>
+              <p>No hay ningún guía en curso que coincida con "{busquedaGuia}".</p>
+            </div>
+          </div>
         ) : (
           <div className="ticket-grid">
-            {visitasEnCurso.map((v) => {
+            {visitasFiltradas.map((v) => {
               const porcentaje = v.montoMinimoRequerido > 0
                 ? Math.min(100, Math.round((v.montoAcumulado / v.montoMinimoRequerido) * 100))
                 : 0;
@@ -757,19 +826,7 @@ function VisitasView({ perfil, mostrarToast }) {
                   <div className="ticket-stub">{tiempoTranscurrido(v.fechaHoraIngreso)}</div>
                   <div className="ticket-perforation"></div>
                   <div className="ticket-body">
-                    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
-                      <h3 style={{ fontSize: 16 }}>{v.guiaNombre}</h3>
-                      {tienePermiso(perfil, "registrar_visitas") && (
-                        <button
-                          className="icon-btn"
-                          onClick={() => setVisitaParaEditar(v)}
-                          title="Editar datos de esta visita"
-                          style={{ flexShrink: 0 }}
-                        >
-                          ✎
-                        </button>
-                      )}
-                    </div>
+                    <h3 style={{ fontSize: 16 }}>{v.guiaNombre}</h3>
                     {v.permisoSalida && (
                       <span className="badge badge-gold" style={{ marginBottom: 8 }}>🚗 Permiso de salida otorgado</span>
                     )}
@@ -801,29 +858,47 @@ function VisitasView({ perfil, mostrarToast }) {
                       <button
                         className="btn btn-ghost"
                         style={{ width: "100%", marginTop: 12 }}
-                        onClick={() => (v.permisoSalida ? setVisitaParaReingreso(v) : otorgarPermisoSalida(v))}
+                        onClick={() => (v.permisoSalida ? revocarPermisoSalida(v) : setVisitaParaPermiso(v))}
                       >
-                        {v.permisoSalida ? "Registrar reingreso (quitar permiso)" : "Otorgar permiso de salida"}
+                        {v.permisoSalida ? "Quitar permiso de salida" : "Otorgar permiso de salida"}
+                      </button>
+                    )}
+
+                    {puedeLiberar && (
+                      <button
+                        className="btn btn-gold"
+                        style={{ width: "100%", marginTop: 8 }}
+                        onClick={() => {
+                          setModoPartner(false);
+                          setVisitaSeleccionada(v);
+                        }}
+                      >
+                        {alcanzado ? "Liberar estacionamiento" : "Registrar compra"}
                       </button>
                     )}
 
                     <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                      {puedeLiberar && (
+                      {puedeLiberar && !alcanzado && (
                         <button
-                          className="btn btn-gold"
+                          className="btn btn-ghost"
                           style={{ flex: 1 }}
-                          onClick={() => setVisitaSeleccionada(v)}
+                          onClick={() => {
+                            setModoPartner(true);
+                            setVisitaSeleccionada(v);
+                          }}
+                          title="Liberar sin monto mínimo — solo para tiendas Partner del shopping"
                         >
-                          {alcanzado ? "Liberar estacionamiento" : "Registrar compra"}
+                          Partner
                         </button>
                       )}
                       {tienePermiso(perfil, "registrar_visitas") && (
                         <button
                           className="btn btn-danger"
+                          style={!alcanzado ? undefined : { marginLeft: "auto" }}
                           onClick={() => anularVisita(v)}
                           title="Anular esta visita (se cargó por error)"
                         >
-                          ✕
+                          ✕ Anular visita
                         </button>
                       )}
                     </div>
@@ -839,7 +914,21 @@ function VisitasView({ perfil, mostrarToast }) {
         <ModalLiberarVisita
           visita={visitaSeleccionada}
           perfil={perfil}
-          onClose={() => setVisitaSeleccionada(null)}
+          modoPartner={modoPartner}
+          onClose={() => {
+            setVisitaSeleccionada(null);
+            setModoPartner(false);
+            setUltimoTicket(obtenerUltimoTicketLiberado());
+          }}
+          mostrarToast={mostrarToast}
+        />
+      )}
+
+      {visitaParaPermiso && (
+        <ModalPermisoSalida
+          visita={visitaParaPermiso}
+          perfil={perfil}
+          onClose={() => setVisitaParaPermiso(null)}
           mostrarToast={mostrarToast}
         />
       )}
@@ -852,204 +941,13 @@ function VisitasView({ perfil, mostrarToast }) {
           mostrarToast={mostrarToast}
         />
       )}
-
-      {visitaParaReingreso && (
-        <ModalReingreso
-          visita={visitaParaReingreso}
-          onClose={() => setVisitaParaReingreso(null)}
-          mostrarToast={mostrarToast}
-        />
-      )}
-
-      {visitaParaEditar && (
-        <ModalEditarVisita
-          visita={visitaParaEditar}
-          empresas={empresas}
-          tiposVehiculo={tiposVehiculo}
-          onClose={() => setVisitaParaEditar(null)}
-          mostrarToast={mostrarToast}
-        />
-      )}
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Reingreso tras un permiso de salida: pide el nuevo N° de ticket
-// ---------------------------------------------------------------------------
-
-function ModalReingreso({ visita, onClose, mostrarToast }) {
-  const [nuevoTicket, setNuevoTicket] = useState("");
-  const [cargando, setCargando] = useState(false);
-  const [error, setError] = useState("");
-
-  async function confirmar(e) {
-    e.preventDefault();
-    if (!nuevoTicket.trim()) {
-      setError("Ingresá el número de ticket que le dieron al guía al volver a entrar.");
-      return;
-    }
-    setError("");
-    setCargando(true);
-    try {
-      await db.collection("visitas").doc(visita.id).update({
-        ticketEstacionamiento: nuevoTicket.trim(),
-        permisoSalida: false,
-        permisoSalidaPor: firebase.firestore.FieldValue.delete(),
-        permisoSalidaFecha: firebase.firestore.FieldValue.delete()
-      });
-      mostrarToast("Reingreso registrado con el nuevo ticket.");
-      onClose();
-    } catch (err) {
-      console.error(err);
-      setError("No se pudo registrar el reingreso. Probá de nuevo.");
-    } finally {
-      setCargando(false);
-    }
-  }
-
-  return (
-    <Modal
-      titulo={`Reingreso — ${visita.guiaNombre}`}
-      onClose={onClose}
-      footer={
-        <React.Fragment>
-          <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
-          <button className="btn btn-gold" onClick={confirmar} disabled={cargando}>
-            {cargando ? "Guardando..." : "Confirmar reingreso"}
-          </button>
-        </React.Fragment>
-      }
-    >
-      {error && <div className="form-error">{error}</div>}
-      <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 16 }}>
-        El guía salió con permiso y volvió a entrar con un ticket de estacionamiento
-        nuevo. Cargá ese número para reemplazar el anterior
-        (<strong>{visita.ticketEstacionamiento}</strong>) en esta visita.
-      </p>
-      <form onSubmit={confirmar}>
-        <div className="field">
-          <label>Nuevo N° de ticket de estacionamiento</label>
-          <input
-            value={nuevoTicket}
-            onChange={(e) => setNuevoTicket(e.target.value.toUpperCase())}
-            placeholder="Número impreso en el ticket"
-            autoFocus
-            required
-          />
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Edición de una visita en curso (corregir datos cargados por error)
-// ---------------------------------------------------------------------------
-
-function ModalEditarVisita({ visita, empresas, tiposVehiculo, onClose, mostrarToast }) {
-  const [nombreGuia, setNombreGuia] = useState(visita.guiaNombre || "");
-  const [empresaId, setEmpresaId] = useState(visita.empresaId || "");
-  const [cantPasajeros, setCantPasajeros] = useState(visita.cantPasajeros || "");
-  const [vehiculoTipoId, setVehiculoTipoId] = useState(visita.vehiculoTipoId || "");
-  const [chapa, setChapa] = useState(visita.chapa || "");
-  const [ticket, setTicket] = useState(visita.ticketEstacionamiento || "");
-  const [cargando, setCargando] = useState(false);
-  const [error, setError] = useState("");
-
-  async function guardar(e) {
-    e.preventDefault();
-    if (!nombreGuia.trim() || !empresaId || !vehiculoTipoId || !chapa.trim() || !ticket.trim() || !cantPasajeros) {
-      setError("Completá todos los campos.");
-      return;
-    }
-    setError("");
-    setCargando(true);
-    try {
-      const empresa = empresas.find((e) => e.id === empresaId);
-      const tipoVehiculo = tiposVehiculo.find((t) => t.id === vehiculoTipoId);
-
-      await db.collection("visitas").doc(visita.id).update({
-        guiaNombre: nombreGuia.trim(),
-        empresaId,
-        empresaNombre: empresa ? empresa.nombre : "",
-        vehiculoTipoId,
-        vehiculoTipoNombre: tipoVehiculo ? tipoVehiculo.nombre : "",
-        montoMinimoRequerido: tipoVehiculo ? Number(tipoVehiculo.montoMinimoCompra) || 0 : 0,
-        chapa: chapa.trim().toUpperCase(),
-        cantPasajeros: Number(cantPasajeros),
-        ticketEstacionamiento: ticket.trim()
-      });
-      mostrarToast("Visita actualizada.");
-      onClose();
-    } catch (err) {
-      console.error(err);
-      setError("No se pudo guardar el cambio. Probá de nuevo.");
-    } finally {
-      setCargando(false);
-    }
-  }
-
-  return (
-    <Modal
-      titulo="Editar visita"
-      onClose={onClose}
-      footer={
-        <React.Fragment>
-          <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
-          <button className="btn btn-gold" onClick={guardar} disabled={cargando}>
-            {cargando ? "Guardando..." : "Guardar cambios"}
-          </button>
-        </React.Fragment>
-      }
-    >
-      {error && <div className="form-error">{error}</div>}
-      <p style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 14 }}>
-        Si cambiás el tipo de vehículo, el monto mínimo requerido se recalcula; el monto
-        ya acumulado (compras registradas) no se toca.
-      </p>
-      <form onSubmit={guardar}>
-        <div className="field">
-          <label>Guía</label>
-          <input value={nombreGuia} onChange={(e) => setNombreGuia(e.target.value.toUpperCase())} required />
-        </div>
-        <div className="field-row">
-          <div className="field">
-            <label>Empresa</label>
-            <select value={empresaId} onChange={(e) => setEmpresaId(e.target.value)} required>
-              <option value="">Seleccionar…</option>
-              {empresas.map((emp) => (
-                <option key={emp.id} value={emp.id}>{emp.nombre}</option>
-              ))}
-            </select>
-          </div>
-          <div className="field">
-            <label>Cantidad de pasajeros</label>
-            <input type="number" min="1" value={cantPasajeros} onChange={(e) => setCantPasajeros(e.target.value)} required />
-          </div>
-        </div>
-        <div className="field-row">
-          <div className="field">
-            <label>Tipo de vehículo</label>
-            <select value={vehiculoTipoId} onChange={(e) => setVehiculoTipoId(e.target.value)} required>
-              <option value="">Seleccionar…</option>
-              {tiposVehiculo.map((t) => (
-                <option key={t.id} value={t.id}>{t.nombre}</option>
-              ))}
-            </select>
-          </div>
-          <div className="field">
-            <label>Chapa</label>
-            <input value={chapa} onChange={(e) => setChapa(e.target.value.toUpperCase())} required />
-          </div>
-        </div>
-        <div className="field">
-          <label>Ticket de estacionamiento</label>
-          <input value={ticket} onChange={(e) => setTicket(e.target.value.toUpperCase())} required />
-        </div>
-      </form>
-    </Modal>
-  );
+function horaActualHHMM() {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
 function FormularioVisita({ guias, empresas, tiposVehiculo, perfil, mostrarToast }) {
@@ -1061,6 +959,7 @@ function FormularioVisita({ guias, empresas, tiposVehiculo, perfil, mostrarToast
   const [vehiculoTipoId, setVehiculoTipoId] = useState("");
   const [chapa, setChapa] = useState("");
   const [ticket, setTicket] = useState("");
+  const [horaIngreso, setHoraIngreso] = useState(horaActualHHMM());
   const [error, setError] = useState("");
   const [cargando, setCargando] = useState(false);
 
@@ -1089,12 +988,13 @@ function FormularioVisita({ guias, empresas, tiposVehiculo, perfil, mostrarToast
     setVehiculoTipoId("");
     setChapa("");
     setTicket("");
+    setHoraIngreso(horaActualHHMM());
   }
 
   async function registrarIngreso(e) {
     e.preventDefault();
     setError("");
-    if (!nombreGuia.trim() || !empresaId || !vehiculoTipoId || !chapa.trim() || !ticket.trim() || !cantPasajeros) {
+    if (!nombreGuia.trim() || !empresaId || !vehiculoTipoId || !chapa.trim() || !ticket.trim() || !cantPasajeros || !horaIngreso) {
       setError("Completá todos los campos para registrar el ingreso.");
       return;
     }
@@ -1112,6 +1012,14 @@ function FormularioVisita({ guias, empresas, tiposVehiculo, perfil, mostrarToast
       const empresa = empresas.find((e) => e.id === empresaId);
       const tipoVehiculo = tiposVehiculo.find((t) => t.id === vehiculoTipoId);
 
+      // La hora de ingreso se carga a mano (el guía puede haber entrado un
+      // rato antes de que se registre en el sistema), tomando como fecha
+      // "hoy" — combinamos la hora elegida con la fecha del momento en que
+      // se está cargando el formulario.
+      const [hh, mm] = horaIngreso.split(":").map(Number);
+      const fechaHoraIngreso = new Date();
+      fechaHoraIngreso.setHours(hh, mm, 0, 0);
+
       await db.collection("visitas").add({
         guiaId,
         guiaNombre: nombreGuia.trim(),
@@ -1125,7 +1033,7 @@ function FormularioVisita({ guias, empresas, tiposVehiculo, perfil, mostrarToast
         ticketEstacionamiento: ticket.trim(),
         estado: "en_curso",
         montoAcumulado: 0,
-        fechaHoraIngreso: firebase.firestore.FieldValue.serverTimestamp(),
+        fechaHoraIngreso: firebase.firestore.Timestamp.fromDate(fechaHoraIngreso),
         usuarioIngresoId: perfil.id,
         usuarioIngresoNombre: perfil.nombre
       });
@@ -1213,14 +1121,25 @@ function FormularioVisita({ guias, empresas, tiposVehiculo, perfil, mostrarToast
             </div>
           </div>
 
-          <div className="field">
-            <label>Ticket de estacionamiento</label>
-            <input
-              value={ticket}
-              onChange={(e) => setTicket(e.target.value.toUpperCase())}
-              placeholder="Número impreso en el ticket"
-              required
-            />
+          <div className="field-row">
+            <div className="field">
+              <label>Ticket de estacionamiento</label>
+              <input
+                value={ticket}
+                onChange={(e) => setTicket(e.target.value.toUpperCase())}
+                placeholder="Número impreso en el ticket"
+                required
+              />
+            </div>
+            <div className="field">
+              <label>Hora de ingreso</label>
+              <input
+                type="time"
+                value={horaIngreso}
+                onChange={(e) => setHoraIngreso(e.target.value)}
+                required
+              />
+            </div>
           </div>
 
           <button className="btn btn-primary" disabled={cargando} style={{ width: "auto", padding: "11px 24px" }}>
@@ -1237,8 +1156,8 @@ function FormularioVisita({ guias, empresas, tiposVehiculo, perfil, mostrarToast
 // ---------------------------------------------------------------------------
 
 function formatearFechaHora(fecha) {
-  if (!fecha) return "—";
-  const d = fecha.toDate ? fecha.toDate() : new Date(fecha);
+  const d = aFechaJS(fecha);
+  if (!d) return "—";
   return d.toLocaleString("es-PY", { dateStyle: "short", timeStyle: "short" });
 }
 
@@ -1266,10 +1185,11 @@ async function obtenerLogoParaPdf() {
   }
 }
 
-async function generarPdfPermisoSalida(visita, usuarioNombre) {
+async function generarPdfPermisoSalida(visita, usuarioNombre, motivos, autorizadoPorLocal) {
   const { jsPDF } = window.jspdf;
   const ancho = 100;
-  const doc = new jsPDF({ unit: "mm", format: [ancho, 95] });
+  const alto = 150; // más alto que antes: entran los motivos, autorizante y las 2 firmas
+  const doc = new jsPDF({ unit: "mm", format: [ancho, alto] });
 
   const margen = 10;
   let y = 16;
@@ -1311,14 +1231,17 @@ async function generarPdfPermisoSalida(visita, usuarioNombre) {
     doc.setFontSize(9);
     doc.text(etiqueta, margen, y);
     doc.setFont("helvetica", "normal");
-    doc.text(String(valor), margen, y + 5);
-    y += 12;
+    const lineas = doc.splitTextToSize(String(valor), ancho - margen * 2);
+    doc.text(lineas, margen, y + 5);
+    y += 6 + (lineas.length - 1) * 4.5 + 6;
   }
 
   fila("Guía", visita.guiaNombre);
   fila("Empresa", visita.empresaNombre);
   fila("Vehículo / Chapa", `${visita.vehiculoTipoNombre} — ${visita.chapa}`);
   fila("N° Ticket de estacionamiento", visita.ticketEstacionamiento);
+  fila("Motivo de la salida", (motivos || []).join(" / ") || "—");
+  fila("Autorizado por local", autorizadoPorLocal || "—");
 
   doc.setLineWidth(0.3);
   doc.line(margen, y, ancho - margen, y);
@@ -1329,7 +1252,163 @@ async function generarPdfPermisoSalida(visita, usuarioNombre) {
   y += 5;
   doc.text(`Emitido: ${new Date().toLocaleString("es-PY")}`, margen, y);
 
+  // Espacios de firma: guía y autorizante del local.
+  y += 16;
+  doc.setLineWidth(0.2);
+  doc.line(margen, y, ancho - margen, y);
+  y += 4;
+  doc.setFontSize(8);
+  doc.text("Firma del guía", margen, y);
+
+  y += 20;
+  doc.line(margen, y, ancho - margen, y);
+  y += 4;
+  doc.text("Firma autorizante del local", margen, y);
+
   doc.save(`permiso-salida-${visita.ticketEstacionamiento}.pdf`);
+}
+
+const MOTIVOS_SALIDA_FIJOS = [
+  "Buscar pasajero",
+  "Entregar mercaderías/pedidos",
+  "Asuntos administrativos",
+  "Taller mecánico/mantenimiento"
+];
+
+function ModalPermisoSalida({ visita, perfil, onClose, mostrarToast }) {
+  const [seleccionados, setSeleccionados] = useState({});
+  const [otroMotivoTexto, setOtroMotivoTexto] = useState("");
+  const [autorizadoPorLocal, setAutorizadoPorLocal] = useState("");
+  const [error, setError] = useState("");
+  const [cargando, setCargando] = useState(false);
+  // Igual que en la liberación: si ya se guardó en Firestore pero falló la
+  // impresión, no hay que repetir el guardado — solo reintentar imprimir.
+  const [yaOtorgado, setYaOtorgado] = useState(false);
+  const [motivosGuardados, setMotivosGuardados] = useState(null);
+  const [autorizanteGuardado, setAutorizanteGuardado] = useState("");
+  const [numeroPermiso, setNumeroPermiso] = useState(null);
+
+  function toggleMotivo(m) {
+    setSeleccionados((prev) => ({ ...prev, [m]: !prev[m] }));
+  }
+
+  async function confirmar() {
+    setError("");
+
+    const motivosFinal = MOTIVOS_SALIDA_FIJOS.filter((m) => seleccionados[m]);
+    if (otroMotivoTexto.trim()) {
+      motivosFinal.push(`Otro motivo: ${otroMotivoTexto.trim()}`);
+    }
+    if (motivosFinal.length === 0) {
+      setError("Marcá al menos un motivo de salida, o completá el campo \"Otro motivo\".");
+      return;
+    }
+    if (!autorizadoPorLocal.trim()) {
+      setError('El campo "Autorizado por local" es obligatorio.');
+      return;
+    }
+
+    setCargando(true);
+    let numero;
+    try {
+      numero = await asignarNumeroSecuencial(
+        "permisosSalida",
+        db.collection("visitas").doc(visita.id),
+        "numeroPermiso",
+        {
+          permisoSalida: true,
+          permisoSalidaPor: perfil.nombre,
+          permisoSalidaFecha: firebase.firestore.FieldValue.serverTimestamp(),
+          motivosSalida: motivosFinal,
+          autorizadoPorLocal: autorizadoPorLocal.trim()
+        }
+      );
+      setMotivosGuardados(motivosFinal);
+      setAutorizanteGuardado(autorizadoPorLocal.trim());
+      setNumeroPermiso(numero);
+      setYaOtorgado(true);
+    } catch (err) {
+      console.error(err);
+      setError("No se pudo otorgar el permiso de salida. Probá de nuevo.");
+      setCargando(false);
+      return;
+    }
+    await intentarImprimir(motivosFinal, autorizadoPorLocal.trim(), numero);
+  }
+
+  async function intentarImprimir(motivos, autorizante, numeroParam) {
+    setCargando(true);
+    setError("");
+    const ok = await imprimirPermisoSalida(
+      visita,
+      perfil.nombre,
+      motivos || motivosGuardados,
+      autorizante || autorizanteGuardado,
+      numeroParam || numeroPermiso
+    );
+    if (ok) {
+      mostrarToast("Permiso de salida otorgado.");
+      setCargando(false);
+      onClose();
+    } else {
+      setError(
+        "El permiso se otorgó, pero no se pudo imprimir el ticket. " +
+        "Verificá que la PC de la impresora esté prendida y el servidor de impresión abierto, y volvé a intentar."
+      );
+      setCargando(false);
+    }
+  }
+
+  return (
+    <Modal titulo={`Permiso de salida — ${visita.guiaNombre}`} onClose={onClose}>
+      {error && <div className="form-error">{error}</div>}
+
+      <div className="field">
+        <label>Motivo de la salida</label>
+        <div className="checkbox-list">
+          {MOTIVOS_SALIDA_FIJOS.map((m) => (
+            <div className="checkbox-row" key={m}>
+              <input
+                type="checkbox"
+                id={`motivo-${m}`}
+                checked={!!seleccionados[m]}
+                onChange={() => toggleMotivo(m)}
+                disabled={yaOtorgado}
+              />
+              <label htmlFor={`motivo-${m}`}>{m}</label>
+            </div>
+          ))}
+        </div>
+        <label style={{ marginTop: 10, display: "block" }}>Otro motivo</label>
+        <input
+          value={otroMotivoTexto}
+          onChange={(e) => setOtroMotivoTexto(e.target.value)}
+          placeholder="Detalle del motivo (opcional)"
+          disabled={yaOtorgado}
+        />
+      </div>
+
+      <div className="field" style={{ marginTop: 14 }}>
+        <label>Autorizado por local *</label>
+        <input
+          value={autorizadoPorLocal}
+          onChange={(e) => setAutorizadoPorLocal(e.target.value.toUpperCase())}
+          placeholder="Nombre de quien autoriza desde el local"
+          required
+          disabled={yaOtorgado}
+        />
+      </div>
+
+      <button
+        className="btn btn-primary"
+        style={{ width: "100%", marginTop: 16 }}
+        disabled={cargando}
+        onClick={yaOtorgado ? () => intentarImprimir() : confirmar}
+      >
+        {cargando ? "Procesando..." : yaOtorgado ? "Reintentar impresión" : "Otorgar permiso e imprimir"}
+      </button>
+    </Modal>
+  );
 }
 
 async function generarPdfLiberacion(visita, usuarioNombre) {
@@ -1427,7 +1506,202 @@ async function generarPdfLiberacion(visita, usuarioNombre) {
   doc.save(`liberacion-ticket-${visita.ticketEstacionamiento}.pdf`);
 }
 
-function ModalLiberarVisita({ visita, perfil, onClose, mostrarToast }) {
+// ---------------------------------------------------------------------------
+// Numeración secuencial (liberaciones y permisos de salida)
+// ---------------------------------------------------------------------------
+// Cada tipo de documento tiene su propio contador en Firestore
+// (colección "contadores", documentos "liberaciones" / "permisosSalida").
+// Se incrementa de forma atómica junto con el guardado del documento
+// principal, todo dentro de la misma transacción — así nunca se repite un
+// número ni se pierde uno aunque dos operadores actúen casi al mismo tiempo.
+async function asignarNumeroSecuencial(contadorId, docRef, campoNumero, camposExtra) {
+  const contadorRef = db.collection("contadores").doc(contadorId);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(contadorRef);
+    const actual = snap.exists ? Number(snap.data().ultimo) || 0 : 0;
+    const siguiente = actual + 1;
+    tx.set(contadorRef, { ultimo: siguiente }, { merge: true });
+    tx.update(docRef, { ...camposExtra, [campoNumero]: siguiente });
+    return siguiente;
+  });
+}
+
+function formatearNumeroSecuencial(n) {
+  return String(n).padStart(6, "0");
+}
+
+// ---------------------------------------------------------------------------
+// Impresión directa del comprobante de liberación (impresora térmica de red)
+// ---------------------------------------------------------------------------
+// En vez de descargar un PDF, el ticket sale directo por la impresora térmica
+// (Epson TM-T20IV-L) conectada en red, a través de un pequeño servidor local
+// ("print-bridge") que corre en la PC del punto de cobro y escucha en
+// http://localhost:5555. Ver la carpeta print-bridge/ para el detalle.
+
+const PRINT_BRIDGE_URL = "http://localhost:5555/imprimir";
+const LLAVE_ULTIMO_TICKET = "spx_ultimoTicketLiberado";
+
+// Manda un pedido de impresión al servidor local. Devuelve true/false en vez
+// de tirar error, para que la app pueda mostrar un aviso simple ("no se pudo
+// imprimir, revisá el servidor") sin romper el flujo de la liberación.
+async function imprimirDirecto({ lines, logo, cortar = true }) {
+  try {
+    const res = await fetch(PRINT_BRIDGE_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lines, logo: logo || null, cortar }),
+      signal: AbortSignal.timeout(8000)
+    });
+    const data = await res.json();
+    return !!data.ok;
+  } catch (err) {
+    console.warn("No se pudo imprimir directo:", err);
+    return false;
+  }
+}
+
+// Una "fila" del comprobante: etiqueta en negrita arriba, valor debajo.
+function filaComprobante(etiqueta, valor) {
+  return [
+    { text: etiqueta, bold: true, align: "left" },
+    { text: String(valor), align: "left" }
+  ];
+}
+
+function construirLineasComprobante(visita, usuarioNombre, rotulo, partner, numeroLiberacion) {
+  const L = [];
+  if (rotulo) L.push({ text: rotulo, bold: true, align: "center" });
+  L.push({ text: "SHOPPING PARIS", bold: true, big: true, align: "center" });
+  L.push({ text: "Comprobante de liberacion de estacionamiento", align: "center" });
+  L.push({ text: "--------------------------------", align: "center" });
+  if (numeroLiberacion) {
+    L.push({ text: `N Liberacion: ${formatearNumeroSecuencial(numeroLiberacion)}`, bold: true, align: "center" });
+  }
+  L.push(...filaComprobante("Guia", visita.guiaNombre));
+  L.push(...filaComprobante("Empresa", visita.empresaNombre));
+  L.push(...filaComprobante("Vehiculo / Chapa", `${visita.vehiculoTipoNombre} - ${visita.chapa}`));
+  L.push(...filaComprobante("N Ticket de estacionamiento", visita.ticketEstacionamiento));
+  L.push(...filaComprobante("Ingreso", formatearFechaHora(visita.fechaHoraIngreso)));
+  L.push(...filaComprobante("Salida", formatearFechaHora(visita.fechaHoraSalida || new Date())));
+  L.push(...filaComprobante("Tiempo de permanencia", tiempoTranscurrido(visita.fechaHoraIngreso)));
+  if (partner) {
+    L.push(...filaComprobante("Liberacion", "PARTNER (sin monto minimo)"));
+  } else {
+    L.push(...filaComprobante("Monto acumulado en compras", `$ ${Number(visita.montoAcumulado || 0).toLocaleString("es-AR")}`));
+  }
+  L.push({ text: "--------------------------------", align: "center" });
+  L.push({ text: `Liberado por: ${usuarioNombre}` });
+  L.push({ text: `Emitido: ${new Date().toLocaleString("es-PY")}` });
+  // Espacio para que el operador firme a mano sobre el papel.
+  L.push({ text: " " });
+  L.push({ text: " " });
+  L.push({ text: "Firma del operador:" });
+  L.push({ text: "________________________" });
+  return L;
+}
+
+// Reutiliza el mismo logo que ya usa el PDF (config/branding en Firestore + Storage).
+async function obtenerLogoBase64ParaTicket() {
+  const logo = await obtenerLogoParaPdf();
+  return logo ? logo.dataUrl : null;
+}
+
+// Imprime las 2 copias del comprobante (una para el guía, una para el shopping),
+// cada una como un ticket separado (corta papel entre una y otra). "partner"
+// indica que se liberó sin exigir el monto mínimo (tienda Partner del shopping).
+async function imprimirComprobanteLiberacion(visita, usuarioNombre, partner, numeroLiberacion) {
+  const logo = await obtenerLogoBase64ParaTicket();
+  const okGuia = await imprimirDirecto({
+    lines: construirLineasComprobante(visita, usuarioNombre, "COPIA: GUÍA", partner, numeroLiberacion),
+    logo,
+    cortar: true
+  });
+  if (!okGuia) return false;
+  const okShopping = await imprimirDirecto({
+    lines: construirLineasComprobante(visita, usuarioNombre, "COPIA: SHOPPING", partner, numeroLiberacion),
+    logo,
+    cortar: true
+  });
+  return okShopping;
+}
+
+// ---------------------------------------------------------------------------
+// Impresión directa del permiso de salida (misma impresora térmica)
+// ---------------------------------------------------------------------------
+
+function construirLineasPermisoSalida(visita, usuarioNombre, motivos, autorizadoPorLocal, rotulo, numeroPermiso) {
+  const L = [];
+  if (rotulo) L.push({ text: rotulo, bold: true, align: "center" });
+  L.push({ text: "SHOPPING PARIS", bold: true, big: true, align: "center" });
+  L.push({ text: "Permiso de salida de estacionamiento", align: "center" });
+  L.push({ text: "--------------------------------", align: "center" });
+  if (numeroPermiso) {
+    L.push({ text: `N Permiso: ${formatearNumeroSecuencial(numeroPermiso)}`, bold: true, align: "center" });
+  }
+  L.push(...filaComprobante("Guia", visita.guiaNombre));
+  L.push(...filaComprobante("Empresa", visita.empresaNombre));
+  L.push(...filaComprobante("Vehiculo / Chapa", `${visita.vehiculoTipoNombre} - ${visita.chapa}`));
+  L.push(...filaComprobante("N Ticket de estacionamiento", visita.ticketEstacionamiento));
+  L.push(...filaComprobante("Motivo de la salida", (motivos || []).join(" / ") || "-"));
+  L.push(...filaComprobante("Autorizado por local", (autorizadoPorLocal || "-").toUpperCase()));
+  L.push({ text: "--------------------------------", align: "center" });
+  L.push({ text: `Otorgado por: ${usuarioNombre}` });
+  L.push({ text: `Emitido: ${new Date().toLocaleString("es-PY")}` });
+  // Espacio en blanco para firmar a mano sobre el papel (lapicera), ya que
+  // al ser un ticket térmico no hay firma digital posible.
+  L.push({ text: " " });
+  L.push({ text: " " });
+  L.push({ text: "Firma del guia:" });
+  L.push({ text: "________________________" });
+  L.push({ text: " " });
+  L.push({ text: " " });
+  L.push({ text: "Firma autorizante local:" });
+  L.push({ text: "________________________" });
+  return L;
+}
+
+// Imprime las 2 copias del permiso de salida (una para el guía, una para el
+// local), cada una como un ticket separado.
+async function imprimirPermisoSalida(visita, usuarioNombre, motivos, autorizadoPorLocal, numeroPermiso) {
+  const logo = await obtenerLogoBase64ParaTicket();
+  const okGuia = await imprimirDirecto({
+    lines: construirLineasPermisoSalida(visita, usuarioNombre, motivos, autorizadoPorLocal, "COPIA: GUÍA", numeroPermiso),
+    logo,
+    cortar: true
+  });
+  if (!okGuia) return false;
+  const okLocal = await imprimirDirecto({
+    lines: construirLineasPermisoSalida(visita, usuarioNombre, motivos, autorizadoPorLocal, "COPIA: LOCAL", numeroPermiso),
+    logo,
+    cortar: true
+  });
+  return okLocal;
+}
+
+// Guarda el último ticket liberado en el navegador para poder reimprimirlo más
+// tarde (por ejemplo si la impresora estaba apagada en el momento). Se guarda
+// por unas horas nomás, para no arriesgarse a reimprimir un ticket viejo por error.
+function guardarUltimoTicketLiberado(visita, usuarioNombre) {
+  try {
+    localStorage.setItem(LLAVE_ULTIMO_TICKET, JSON.stringify({ visita, usuarioNombre, guardadoEn: Date.now() }));
+  } catch (err) {
+    console.warn("No se pudo guardar el último ticket liberado:", err);
+  }
+}
+
+function obtenerUltimoTicketLiberado() {
+  try {
+    const raw = localStorage.getItem(LLAVE_ULTIMO_TICKET);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (Date.now() - data.guardadoEn > 1000 * 60 * 60 * 4) return null; // vence a las 4hs
+    return data;
+  } catch (err) {
+    return null;
+  }
+}
+
+function ModalLiberarVisita({ visita, perfil, modoPartner, onClose, mostrarToast }) {
   const [montoNuevo, setMontoNuevo] = useState("");
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState("");
@@ -1435,7 +1709,7 @@ function ModalLiberarVisita({ visita, perfil, onClose, mostrarToast }) {
   const porcentaje = visita.montoMinimoRequerido > 0
     ? Math.min(100, Math.round((visita.montoAcumulado / visita.montoMinimoRequerido) * 100))
     : 0;
-  const alcanzado = visita.montoAcumulado >= visita.montoMinimoRequerido;
+  const alcanzado = !!modoPartner || visita.montoAcumulado >= visita.montoMinimoRequerido;
   const falta = Math.max(0, visita.montoMinimoRequerido - visita.montoAcumulado);
 
   async function agregarMonto(e) {
@@ -1461,22 +1735,54 @@ function ModalLiberarVisita({ visita, perfil, onClose, mostrarToast }) {
     }
   }
 
+  // Cuando la impresión falla pero el estacionamiento ya quedó liberado en la
+  // base, no hay que reintentar el paso de Firestore — solo la impresión.
+  const [yaLiberado, setYaLiberado] = useState(false);
+  const [numeroLiberacion, setNumeroLiberacion] = useState(null);
+
   async function liberar() {
     setCargando(true);
     setError("");
+    let numero;
     try {
-      await db.collection("visitas").doc(visita.id).update({
-        estado: "liberado",
-        fechaHoraSalida: firebase.firestore.FieldValue.serverTimestamp(),
-        usuarioSalidaId: perfil.id,
-        usuarioSalidaNombre: perfil.nombre
-      });
-      await generarPdfLiberacion(visita, perfil.nombre);
-      mostrarToast(`Estacionamiento liberado: ${visita.guiaNombre}`);
-      onClose();
+      numero = await asignarNumeroSecuencial(
+        "liberaciones",
+        db.collection("visitas").doc(visita.id),
+        "numeroLiberacion",
+        {
+          estado: "liberado",
+          fechaHoraSalida: firebase.firestore.FieldValue.serverTimestamp(),
+          usuarioSalidaId: perfil.id,
+          usuarioSalidaNombre: perfil.nombre,
+          liberadoComoPartner: !!modoPartner
+        }
+      );
+      setNumeroLiberacion(numero);
+      setYaLiberado(true);
     } catch (err) {
       console.error(err);
       setError("No se pudo liberar el estacionamiento. Probá de nuevo.");
+      setCargando(false);
+      return;
+    }
+    await intentarImprimir(numero);
+  }
+
+  async function intentarImprimir(numeroParam) {
+    const numero = numeroParam || numeroLiberacion;
+    setCargando(true);
+    setError("");
+    const ok = await imprimirComprobanteLiberacion(visita, perfil.nombre, modoPartner, numero);
+    if (ok) {
+      guardarUltimoTicketLiberado({ ...visita, numeroLiberacion: numero, liberadoComoPartner: !!modoPartner }, perfil.nombre);
+      mostrarToast(`Estacionamiento liberado: ${visita.guiaNombre}`);
+      setCargando(false);
+      onClose();
+    } else {
+      setError(
+        "El estacionamiento se liberó, pero no se pudo imprimir el ticket. " +
+        "Verificá que la PC de la impresora esté prendida y el servidor de impresión abierto, y volvé a intentar."
+      );
       setCargando(false);
     }
   }
@@ -1492,50 +1798,75 @@ function ModalLiberarVisita({ visita, perfil, onClose, mostrarToast }) {
         <span><strong>En sala:</strong> {tiempoTranscurrido(visita.fechaHoraIngreso)}</span>
       </div>
 
-      <div style={{ marginBottom: 18 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 6 }}>
-          <span>
-            $ {Number(visita.montoAcumulado || 0).toLocaleString("es-AR")} de $ {Number(visita.montoMinimoRequerido || 0).toLocaleString("es-AR")}
-          </span>
-          <span style={{ fontWeight: 600 }}>{porcentaje}%</span>
+      {modoPartner ? (
+        <div
+          style={{
+            background: "var(--paper)",
+            border: "1px solid var(--gold)",
+            borderRadius: 8,
+            padding: "10px 12px",
+            marginBottom: 18,
+            fontSize: 13
+          }}
+        >
+          <strong>Liberación Partner:</strong> se va a liberar el estacionamiento sin exigir el monto mínimo de compra, ya que la empresa es tienda Partner del shopping.
         </div>
-        <div style={{ height: 8, borderRadius: 4, background: "var(--paper)", overflow: "hidden" }}>
-          <div
-            style={{
-              height: "100%",
-              width: `${porcentaje}%`,
-              background: alcanzado ? "var(--success)" : "var(--gold)",
-              transition: "width 0.2s ease"
-            }}
-          ></div>
-        </div>
-        {!alcanzado && (
-          <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 6 }}>
-            Faltan $ {falta.toLocaleString("es-AR")} para liberar el estacionamiento.
-          </p>
-        )}
-        {alcanzado && (
-          <p style={{ fontSize: 12, color: "var(--success)", marginTop: 6, fontWeight: 600 }}>
-            ✓ Alcanzó el monto mínimo — ya se puede liberar.
-          </p>
-        )}
-      </div>
+      ) : (
+        <React.Fragment>
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 6 }}>
+              <span>
+                $ {Number(visita.montoAcumulado || 0).toLocaleString("es-AR")} de $ {Number(visita.montoMinimoRequerido || 0).toLocaleString("es-AR")}
+              </span>
+              <span style={{ fontWeight: 600 }}>{porcentaje}%</span>
+            </div>
+            <div style={{ height: 8, borderRadius: 4, background: "var(--paper)", overflow: "hidden" }}>
+              <div
+                style={{
+                  height: "100%",
+                  width: `${porcentaje}%`,
+                  background: alcanzado ? "var(--success)" : "var(--gold)",
+                  transition: "width 0.2s ease"
+                }}
+              ></div>
+            </div>
+            {!alcanzado && (
+              <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 6 }}>
+                Faltan $ {falta.toLocaleString("es-AR")} para liberar el estacionamiento.
+              </p>
+            )}
+            {alcanzado && (
+              <p style={{ fontSize: 12, color: "var(--success)", marginTop: 6, fontWeight: 600 }}>
+                ✓ Alcanzó el monto mínimo — ya se puede liberar.
+              </p>
+            )}
+          </div>
 
-      <form onSubmit={agregarMonto} style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-        <input
-          type="number"
-          min="0"
-          step="0.01"
-          placeholder="Monto del comprobante"
-          value={montoNuevo}
-          onChange={(e) => setMontoNuevo(e.target.value)}
-          style={{ flex: 1, padding: "10px 12px", border: "1px solid var(--line)", borderRadius: 8 }}
-        />
-        <button className="btn btn-ghost" disabled={cargando}>Agregar</button>
-      </form>
+          <form onSubmit={agregarMonto} style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              placeholder="Monto del comprobante"
+              value={montoNuevo}
+              onChange={(e) => setMontoNuevo(e.target.value)}
+              style={{ flex: 1, padding: "10px 12px", border: "1px solid var(--line)", borderRadius: 8 }}
+            />
+            <button className="btn btn-ghost" disabled={cargando}>Agregar</button>
+          </form>
+        </React.Fragment>
+      )}
 
-      <button className="btn btn-primary" disabled={!alcanzado || cargando} onClick={liberar}>
-        {cargando ? "Procesando..." : "Liberar estacionamiento y emitir ticket"}
+      <button
+        className="btn btn-primary"
+        disabled={(!alcanzado && !yaLiberado) || cargando}
+        onClick={yaLiberado ? () => intentarImprimir() : liberar}
+      >
+        {cargando
+          ? "Procesando..."
+          : yaLiberado
+          ? "Reintentar impresión"
+          : "Liberar estacionamiento y emitir ticket"}
       </button>
     </Modal>
   );
@@ -1770,397 +2101,6 @@ function ModalGuia({ guia, onClose, mostrarToast }) {
 }
 
 // ---------------------------------------------------------------------------
-// Vista: Paris Store — carga básica de datos sin manejo de estacionamiento
-// ---------------------------------------------------------------------------
-
-function ParisStoreView({ perfil, mostrarToast }) {
-  const [guias, setGuias] = useState([]);
-  const [empresas, setEmpresas] = useState([]);
-  const [tiposVehiculo, setTiposVehiculo] = useState([]);
-  const [registros, setRegistros] = useState([]);
-  const [registroParaEditar, setRegistroParaEditar] = useState(null);
-
-  useEffect(() => {
-    const u1 = db.collection("guias").orderBy("nombre").onSnapshot((s) =>
-      setGuias(s.docs.map((d) => ({ id: d.id, ...d.data() })))
-    );
-    const u2 = db.collection("empresas").orderBy("nombre").onSnapshot((s) =>
-      setEmpresas(s.docs.map((d) => ({ id: d.id, ...d.data() })).filter((e) => e.activo !== false))
-    );
-    const u3 = db.collection("tiposVehiculo").orderBy("nombre").onSnapshot((s) =>
-      setTiposVehiculo(s.docs.map((d) => ({ id: d.id, ...d.data() })).filter((t) => t.activo !== false))
-    );
-    const u4 = db
-      .collection("registrosParisStore")
-      .orderBy("fechaHoraIngreso", "desc")
-      .limit(50)
-      .onSnapshot((s) => setRegistros(s.docs.map((d) => ({ id: d.id, ...d.data() }))));
-    return () => {
-      u1();
-      u2();
-      u3();
-      u4();
-    };
-  }, []);
-
-  async function anularRegistro(r) {
-    const confirmar = window.confirm(`¿Anular el registro de "${r.guiaNombre}"? No se puede deshacer.`);
-    if (!confirmar) return;
-    try {
-      await db.collection("registrosParisStore").doc(r.id).delete();
-      mostrarToast("Registro anulado.");
-    } catch (err) {
-      console.error(err);
-      mostrarToast("No se pudo anular el registro.");
-    }
-  }
-
-  return (
-    <div>
-      <div className="page-header">
-        <div>
-          <div className="page-eyebrow">Paris Store</div>
-          <h1>Paris Store</h1>
-          <p className="page-desc">
-            Carga de datos desde este punto de atención. No maneja estacionamiento ni imprime comprobantes.
-          </p>
-        </div>
-      </div>
-
-      <FormularioParisStore
-        guias={guias}
-        empresas={empresas}
-        tiposVehiculo={tiposVehiculo}
-        perfil={perfil}
-        mostrarToast={mostrarToast}
-      />
-
-      <div style={{ marginTop: 32 }}>
-        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 14 }}>
-          <h2 style={{ fontSize: 18 }}>Registros recientes</h2>
-          <span className="badge badge-gold">{registros.length}</span>
-        </div>
-
-        <div className="panel">
-          <div className="panel-body" style={{ padding: 0 }}>
-            {registros.length === 0 ? (
-              <div className="empty-state">
-                <div className="display">Todavía no hay registros</div>
-                <p>Los que cargues acá van a aparecer en esta lista.</p>
-              </div>
-            ) : (
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Fecha</th>
-                    <th>Guía</th>
-                    <th>Empresa</th>
-                    <th>Vehículo</th>
-                    <th>Pasajeros</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {registros.map((r) => (
-                    <tr key={r.id}>
-                      <td>{formatearFechaHora(r.fechaHoraIngreso)}</td>
-                      <td>{r.guiaNombre}</td>
-                      <td>{r.empresaNombre}</td>
-                      <td>{r.vehiculoTipoNombre} · {r.chapa}</td>
-                      <td>{r.cantPasajeros}</td>
-                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                        <button className="icon-btn" onClick={() => setRegistroParaEditar(r)} title="Editar">✎</button>
-                        <button className="icon-btn" onClick={() => anularRegistro(r)} title="Anular" style={{ color: "var(--alert)" }}>✕</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {registroParaEditar && (
-        <ModalEditarRegistroParisStore
-          registro={registroParaEditar}
-          empresas={empresas}
-          tiposVehiculo={tiposVehiculo}
-          onClose={() => setRegistroParaEditar(null)}
-          mostrarToast={mostrarToast}
-        />
-      )}
-    </div>
-  );
-}
-
-function FormularioParisStore({ guias, empresas, tiposVehiculo, perfil, mostrarToast }) {
-  const [nombreGuia, setNombreGuia] = useState("");
-  const [guiaSeleccionado, setGuiaSeleccionado] = useState(null);
-  const [mostrarSugerencias, setMostrarSugerencias] = useState(false);
-  const [empresaId, setEmpresaId] = useState("");
-  const [cantPasajeros, setCantPasajeros] = useState("");
-  const [vehiculoTipoId, setVehiculoTipoId] = useState("");
-  const [chapa, setChapa] = useState("");
-  const [ticket, setTicket] = useState("");
-  const [error, setError] = useState("");
-  const [cargando, setCargando] = useState(false);
-
-  const sugerencias =
-    nombreGuia.trim().length > 0
-      ? guias.filter((g) => g.nombre.toLowerCase().includes(nombreGuia.trim().toLowerCase())).slice(0, 6)
-      : [];
-
-  function elegirGuia(g) {
-    setGuiaSeleccionado(g);
-    setNombreGuia(g.nombre);
-    setMostrarSugerencias(false);
-  }
-
-  function cambiarNombreGuia(valor) {
-    setNombreGuia(valor.toUpperCase());
-    setGuiaSeleccionado(null);
-    setMostrarSugerencias(true);
-  }
-
-  function limpiarFormulario() {
-    setNombreGuia("");
-    setGuiaSeleccionado(null);
-    setEmpresaId("");
-    setCantPasajeros("");
-    setVehiculoTipoId("");
-    setChapa("");
-    setTicket("");
-  }
-
-  async function registrar(e) {
-    e.preventDefault();
-    setError("");
-    if (!nombreGuia.trim() || !empresaId || !vehiculoTipoId || !chapa.trim() || !cantPasajeros) {
-      setError("Completá guía, empresa, pasajeros, tipo de vehículo y chapa.");
-      return;
-    }
-    setCargando(true);
-    try {
-      let guiaId = guiaSeleccionado ? guiaSeleccionado.id : null;
-      if (!guiaId) {
-        const nuevoGuia = await db.collection("guias").add({
-          nombre: nombreGuia.trim(),
-          creadoEn: firebase.firestore.FieldValue.serverTimestamp()
-        });
-        guiaId = nuevoGuia.id;
-      }
-
-      const empresa = empresas.find((e) => e.id === empresaId);
-      const tipoVehiculo = tiposVehiculo.find((t) => t.id === vehiculoTipoId);
-
-      await db.collection("registrosParisStore").add({
-        guiaId,
-        guiaNombre: nombreGuia.trim(),
-        empresaId,
-        empresaNombre: empresa ? empresa.nombre : "",
-        vehiculoTipoId,
-        vehiculoTipoNombre: tipoVehiculo ? tipoVehiculo.nombre : "",
-        chapa: chapa.trim().toUpperCase(),
-        cantPasajeros: Number(cantPasajeros),
-        ticketEstacionamiento: ticket.trim(),
-        fechaHoraIngreso: firebase.firestore.FieldValue.serverTimestamp(),
-        usuarioIngresoId: perfil.id,
-        usuarioIngresoNombre: perfil.nombre
-      });
-
-      mostrarToast(`Registro cargado: ${nombreGuia.trim()}`);
-      limpiarFormulario();
-    } catch (err) {
-      console.error(err);
-      setError("No se pudo guardar el registro. Probá de nuevo.");
-    } finally {
-      setCargando(false);
-    }
-  }
-
-  return (
-    <div className="panel">
-      <div className="panel-header">
-        <h2>Nuevo registro</h2>
-      </div>
-      <div className="panel-body">
-        {error && <div className="form-error">{error}</div>}
-        <form onSubmit={registrar}>
-          <div className="field autocomplete">
-            <label>Guía</label>
-            <input
-              value={nombreGuia}
-              onChange={(e) => cambiarNombreGuia(e.target.value)}
-              onFocus={() => setMostrarSugerencias(true)}
-              onBlur={() => setTimeout(() => setMostrarSugerencias(false), 150)}
-              placeholder="Nombre y apellido"
-              autoComplete="off"
-              required
-            />
-            {mostrarSugerencias && nombreGuia.trim() && (
-              <div className="autocomplete-list">
-                {sugerencias.map((g) => (
-                  <div key={g.id} className="autocomplete-item" onMouseDown={() => elegirGuia(g)}>
-                    {g.nombre}
-                  </div>
-                ))}
-                {!sugerencias.some((g) => g.nombre.toLowerCase() === nombreGuia.trim().toLowerCase()) && (
-                  <div className="autocomplete-item crear-nuevo" onMouseDown={() => setMostrarSugerencias(false)}>
-                    + Crear guía nuevo: "{nombreGuia.trim()}"
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          <div className="field-row">
-            <div className="field">
-              <label>Empresa</label>
-              <select value={empresaId} onChange={(e) => setEmpresaId(e.target.value)} required>
-                <option value="">Seleccionar…</option>
-                {empresas.map((emp) => (
-                  <option key={emp.id} value={emp.id}>{emp.nombre}</option>
-                ))}
-              </select>
-            </div>
-            <div className="field">
-              <label>Cantidad de pasajeros</label>
-              <input type="number" min="1" value={cantPasajeros} onChange={(e) => setCantPasajeros(e.target.value)} required />
-            </div>
-          </div>
-
-          <div className="field-row">
-            <div className="field">
-              <label>Tipo de vehículo</label>
-              <select value={vehiculoTipoId} onChange={(e) => setVehiculoTipoId(e.target.value)} required>
-                <option value="">Seleccionar…</option>
-                {tiposVehiculo.map((t) => (
-                  <option key={t.id} value={t.id}>{t.nombre}</option>
-                ))}
-              </select>
-            </div>
-            <div className="field">
-              <label>Chapa</label>
-              <input value={chapa} onChange={(e) => setChapa(e.target.value.toUpperCase())} placeholder="AB 123 CD" required />
-            </div>
-          </div>
-
-          <div className="field">
-            <label>Ticket de estacionamiento (opcional)</label>
-            <input value={ticket} onChange={(e) => setTicket(e.target.value.toUpperCase())} placeholder="Si corresponde" />
-          </div>
-
-          <button className="btn btn-primary" disabled={cargando} style={{ width: "auto", padding: "11px 24px" }}>
-            {cargando ? "Guardando..." : "Registrar"}
-          </button>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-function ModalEditarRegistroParisStore({ registro, empresas, tiposVehiculo, onClose, mostrarToast }) {
-  const [nombreGuia, setNombreGuia] = useState(registro.guiaNombre || "");
-  const [empresaId, setEmpresaId] = useState(registro.empresaId || "");
-  const [cantPasajeros, setCantPasajeros] = useState(registro.cantPasajeros || "");
-  const [vehiculoTipoId, setVehiculoTipoId] = useState(registro.vehiculoTipoId || "");
-  const [chapa, setChapa] = useState(registro.chapa || "");
-  const [ticket, setTicket] = useState(registro.ticketEstacionamiento || "");
-  const [cargando, setCargando] = useState(false);
-  const [error, setError] = useState("");
-
-  async function guardar(e) {
-    e.preventDefault();
-    if (!nombreGuia.trim() || !empresaId || !vehiculoTipoId || !chapa.trim() || !cantPasajeros) {
-      setError("Completá todos los campos obligatorios.");
-      return;
-    }
-    setError("");
-    setCargando(true);
-    try {
-      const empresa = empresas.find((e) => e.id === empresaId);
-      const tipoVehiculo = tiposVehiculo.find((t) => t.id === vehiculoTipoId);
-
-      await db.collection("registrosParisStore").doc(registro.id).update({
-        guiaNombre: nombreGuia.trim(),
-        empresaId,
-        empresaNombre: empresa ? empresa.nombre : "",
-        vehiculoTipoId,
-        vehiculoTipoNombre: tipoVehiculo ? tipoVehiculo.nombre : "",
-        chapa: chapa.trim().toUpperCase(),
-        cantPasajeros: Number(cantPasajeros),
-        ticketEstacionamiento: ticket.trim()
-      });
-      mostrarToast("Registro actualizado.");
-      onClose();
-    } catch (err) {
-      console.error(err);
-      setError("No se pudo guardar el cambio. Probá de nuevo.");
-    } finally {
-      setCargando(false);
-    }
-  }
-
-  return (
-    <Modal
-      titulo="Editar registro"
-      onClose={onClose}
-      footer={
-        <React.Fragment>
-          <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
-          <button className="btn btn-gold" onClick={guardar} disabled={cargando}>
-            {cargando ? "Guardando..." : "Guardar cambios"}
-          </button>
-        </React.Fragment>
-      }
-    >
-      {error && <div className="form-error">{error}</div>}
-      <form onSubmit={guardar}>
-        <div className="field">
-          <label>Guía</label>
-          <input value={nombreGuia} onChange={(e) => setNombreGuia(e.target.value.toUpperCase())} required />
-        </div>
-        <div className="field-row">
-          <div className="field">
-            <label>Empresa</label>
-            <select value={empresaId} onChange={(e) => setEmpresaId(e.target.value)} required>
-              <option value="">Seleccionar…</option>
-              {empresas.map((emp) => (
-                <option key={emp.id} value={emp.id}>{emp.nombre}</option>
-              ))}
-            </select>
-          </div>
-          <div className="field">
-            <label>Cantidad de pasajeros</label>
-            <input type="number" min="1" value={cantPasajeros} onChange={(e) => setCantPasajeros(e.target.value)} required />
-          </div>
-        </div>
-        <div className="field-row">
-          <div className="field">
-            <label>Tipo de vehículo</label>
-            <select value={vehiculoTipoId} onChange={(e) => setVehiculoTipoId(e.target.value)} required>
-              <option value="">Seleccionar…</option>
-              {tiposVehiculo.map((t) => (
-                <option key={t.id} value={t.id}>{t.nombre}</option>
-              ))}
-            </select>
-          </div>
-          <div className="field">
-            <label>Chapa</label>
-            <input value={chapa} onChange={(e) => setChapa(e.target.value.toUpperCase())} required />
-          </div>
-        </div>
-        <div className="field">
-          <label>Ticket de estacionamiento (opcional)</label>
-          <input value={ticket} onChange={(e) => setTicket(e.target.value.toUpperCase())} />
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Vista genérica de catálogo simple (Empresas / Tipos de vehículo)
 // ---------------------------------------------------------------------------
 
@@ -2333,135 +2273,289 @@ function fechaISO(date) {
   return `${y}-${m}-${d}`;
 }
 
-function badgeEstado(estado) {
-  if (estado === "liberado") return <span className="badge badge-success">Liberado</span>;
-  if (estado === "no_liberado") return <span className="badge badge-alert">No liberado</span>;
-  if (estado === "paris_store") return <span className="badge badge-gold">Paris Store</span>;
-  return <span className="badge badge-muted">En curso</span>;
+const ESTADO_VISITA_LABEL = { en_curso: "En curso", liberado: "Liberado", no_liberado: "No liberado" };
+
+// Cuenta valores distintos (no vacíos) de un campo dentro de un array de objetos.
+function contarUnicos(datos, campo) {
+  return new Set(datos.map((d) => d[campo]).filter((v) => v !== undefined && v !== null && v !== "")).size;
 }
 
-async function generarPdfDetalleCategoria({ desde, hasta, titulo, filas, totalTexto }) {
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ unit: "mm", format: "a4" });
-  const margen = 15;
-  const anchoUtil = 210 - margen * 2;
-  let y = margen;
+// Agrupa y cuenta cuántas filas hay por cada valor de un campo (ej. tipo de
+// vehículo), de mayor a menor cantidad. Usado para el desglose "Por tipo de
+// vehículo" en los reportes.
+function contarPorCampo(datos, campo) {
+  const mapa = {};
+  datos.forEach((d) => {
+    const key = d[campo] || "(sin especificar)";
+    mapa[key] = (mapa[key] || 0) + 1;
+  });
+  return Object.entries(mapa)
+    .map(([valor, cantidad]) => ({ valor, cantidad }))
+    .sort((a, b) => b.cantidad - a.cantidad);
+}
 
-  const logo = await obtenerLogoParaPdf();
-
-  if (logo) {
-    try {
-      doc.addImage(logo.dataUrl, logo.formato, margen, y, 16, 16);
-    } catch (err) {
-      console.warn("No se pudo incrustar el logo en el PDF:", err);
+// Agrupa las visitas por guía para el reporte de "personas ingresadas por guía".
+function agruparPersonasPorGuia(visitas) {
+  const mapa = new Map();
+  for (const v of visitas) {
+    const key = v.guiaNombre || "(sin nombre)";
+    if (!mapa.has(key)) {
+      mapa.set(key, { guia: key, empresa: v.empresaNombre || "", visitas: 0, pasajeros: 0 });
     }
+    const item = mapa.get(key);
+    item.visitas += 1;
+    item.pasajeros += Number(v.cantPasajeros) || 0;
   }
-  const xTexto = logo ? margen + 20 : margen;
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(16);
-  doc.text("SHOPPING PARIS", xTexto, y + 7);
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(10);
-  doc.text(titulo, xTexto, y + 13);
-  y += 22;
+  return Array.from(mapa.values()).sort((a, b) => b.pasajeros - a.pasajeros);
+}
 
-  doc.setFontSize(9);
-  doc.setTextColor(100);
-  doc.text(`Período: ${desde} a ${hasta}`, margen, y);
-  doc.text(`Emitido: ${new Date().toLocaleString("es-PY")}`, 210 - margen, y, { align: "right" });
-  doc.setTextColor(0);
-  y += 5;
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
-  doc.text(totalTexto, margen, y);
-  doc.setFont("helvetica", "normal");
-  y += 5;
-  doc.setLineWidth(0.3);
-  doc.line(margen, y, 210 - margen, y);
-  y += 8;
+// Configuración de los 4 reportes desplegables desde las tarjetas de "Actividad por período".
+// "totales" arma la fila de resumen que se muestra en pantalla y al pie del PDF.
+const REPORTES_DETALLE_CONFIG = {
+  personas: {
+    titulo: "Personas ingresadas por guía",
+    columnas: ["Guía", "Empresa", "Visitas", "Pasajeros"],
+    datos: (visitas) => agruparPersonasPorGuia(visitas),
+    filas: (datos) => datos.map((r) => [r.guia, r.empresa, r.visitas, r.pasajeros]),
+    totales: (datos) => [
+      { label: "Total de Guías", valor: datos.length },
+      { label: "Total de Empresas", valor: contarUnicos(datos, "empresa") },
+      { label: "Total de Visitas", valor: datos.reduce((acc, r) => acc + r.visitas, 0) },
+      { label: "Total de Pasajeros", valor: datos.reduce((acc, r) => acc + r.pasajeros, 0) }
+    ]
+  },
+  vehiculos: {
+    titulo: "Vehículos ingresados",
+    columnas: ["Fecha ingreso", "Guía", "Empresa", "Vehículo", "Chapa", "Pasajeros", "Ticket", "Estado"],
+    datos: (visitas) => visitas,
+    filas: (datos) => datos.map((v) => [
+      formatearFechaHora(v.fechaHoraIngreso),
+      v.guiaNombre,
+      v.empresaNombre,
+      v.vehiculoTipoNombre,
+      v.chapa,
+      v.cantPasajeros,
+      v.ticketEstacionamiento,
+      ESTADO_VISITA_LABEL[v.estado] || v.estado
+    ]),
+    totales: (datos) => [
+      { label: "Total de Guías", valor: contarUnicos(datos, "guiaNombre") },
+      { label: "Total de Empresas", valor: contarUnicos(datos, "empresaNombre") },
+      { label: "Total de Vehículos", valor: datos.length },
+      { label: "Total de Tickets", valor: contarUnicos(datos, "ticketEstacionamiento") },
+      { label: "Total de Monto acumulado", valor: `$ ${datos.reduce((acc, v) => acc + (Number(v.montoAcumulado) || 0), 0).toLocaleString("es-AR")}` }
+    ],
+    desglose: (datos) => ({ titulo: "Por tipo de vehículo", filas: contarPorCampo(datos, "vehiculoTipoNombre") })
+  },
+  liberados: {
+    titulo: "Vehículos liberados",
+    columnas: ["Fecha ingreso", "Fecha salida", "Guía", "Empresa", "Vehículo", "Ticket", "Monto acumulado"],
+    datos: (visitas) => visitas.filter((v) => v.estado === "liberado"),
+    filas: (datos) => datos.map((v) => [
+      formatearFechaHora(v.fechaHoraIngreso),
+      formatearFechaHora(v.fechaHoraSalida),
+      v.guiaNombre,
+      v.empresaNombre,
+      `${v.vehiculoTipoNombre} - ${v.chapa}`,
+      v.ticketEstacionamiento,
+      `$ ${Number(v.montoAcumulado || 0).toLocaleString("es-AR")}`
+    ]),
+    totales: (datos) => [
+      { label: "Total de Guías", valor: contarUnicos(datos, "guiaNombre") },
+      { label: "Total de Empresas", valor: contarUnicos(datos, "empresaNombre") },
+      { label: "Total de Vehículos", valor: datos.length },
+      { label: "Total de Tickets", valor: contarUnicos(datos, "ticketEstacionamiento") },
+      { label: "Total de Monto acumulado", valor: `$ ${datos.reduce((acc, v) => acc + (Number(v.montoAcumulado) || 0), 0).toLocaleString("es-AR")}` }
+    ],
+    desglose: (datos) => ({ titulo: "Por tipo de vehículo", filas: contarPorCampo(datos, "vehiculoTipoNombre") })
+  },
+  no_liberados: {
+    titulo: "Vehículos no liberados",
+    columnas: ["Fecha", "Guía", "Empresa", "Vehículo", "Pasajeros", "Monto / Mínimo", "Faltó"],
+    datos: (visitas) => visitas.filter((v) => v.estado === "no_liberado"),
+    filas: (datos) => datos.map((v) => [
+      formatearFechaHora(v.fechaHoraIngreso),
+      v.guiaNombre,
+      v.empresaNombre,
+      `${v.vehiculoTipoNombre} · ${v.chapa}`,
+      v.cantPasajeros,
+      `$ ${Number(v.montoAcumulado || 0).toLocaleString("es-AR")} / $ ${Number(v.montoMinimoRequerido || 0).toLocaleString("es-AR")}`,
+      `$ ${Math.max(0, (v.montoMinimoRequerido || 0) - (v.montoAcumulado || 0)).toLocaleString("es-AR")}`
+    ]),
+    totales: (datos) => [
+      { label: "Total de Guías", valor: contarUnicos(datos, "guiaNombre") },
+      { label: "Total de Empresas", valor: contarUnicos(datos, "empresaNombre") },
+      { label: "Total de Vehículos", valor: datos.length },
+      { label: "Total de Tickets", valor: contarUnicos(datos, "ticketEstacionamiento") },
+      { label: "Total acumulado", valor: `$ ${datos.reduce((acc, v) => acc + (Number(v.montoAcumulado) || 0), 0).toLocaleString("es-AR")}` },
+      { label: "Total faltante", valor: `$ ${datos.reduce((acc, v) => acc + Math.max(0, (v.montoMinimoRequerido || 0) - (v.montoAcumulado || 0)), 0).toLocaleString("es-AR")}` }
+    ],
+    desglose: (datos) => ({ titulo: "Por tipo de vehículo", filas: contarPorCampo(datos, "vehiculoTipoNombre") })
+  }
+};
 
-  const columnas = [
-    { titulo: "Fecha", ancho: 24 },
-    { titulo: "Guía", ancho: 34 },
-    { titulo: "Empresa", ancho: 30 },
-    { titulo: "Vehículo", ancho: 30 },
-    { titulo: "Pas.", ancho: 12 },
-    { titulo: "Ticket", ancho: 24 },
-    { titulo: "Estado", ancho: 26 }
-  ];
+function ModalReporteDetalle({ tipo, visitas, desde, hasta, onClose }) {
+  const config = REPORTES_DETALLE_CONFIG[tipo];
+  const datos = config.datos(visitas);
+  const filas = config.filas(datos);
+  const totales = config.totales ? config.totales(datos) : [];
+  const desglose = config.desglose ? config.desglose(datos) : null;
 
-  function dibujarEncabezadoTabla() {
-    doc.setFillColor(230, 225, 210);
-    doc.rect(margen, y - 4.5, anchoUtil, 6.5, "F");
-    let x = margen + 1.5;
+  function descargarPDF() {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(7.5);
-    doc.setTextColor(60);
-    columnas.forEach((c) => {
-      doc.text(c.titulo, x, y);
-      x += c.ancho;
-    });
-    doc.setTextColor(0);
-    y += 6;
-  }
-
-  const ESTADO_LABEL = { liberado: "Liberado", no_liberado: "No liberado", en_curso: "En curso" };
-
-  if (filas.length === 0) {
+    doc.setFontSize(14);
+    doc.text("SHOPPING PARIS", 14, 15);
+    doc.setFontSize(11);
+    doc.text(config.titulo, 14, 22);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
-    doc.setTextColor(120);
-    doc.text("Sin registros en esta categoría para el período consultado.", margen, y);
-    doc.setTextColor(0);
-  } else {
-    dibujarEncabezadoTabla();
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7.5);
-
-    filas.forEach((v, i) => {
-      if (y > 297 - margen - 10) {
-        doc.addPage();
-        y = margen + 5;
-        dibujarEncabezadoTabla();
-      }
-      if (i % 2 === 1) {
-        doc.setFillColor(247, 245, 241);
-        doc.rect(margen, y - 4, anchoUtil, 5.5, "F");
-      }
-      const fila = [
-        formatearFechaHora(v.fechaHoraIngreso),
-        v.guiaNombre || "",
-        v.empresaNombre || "",
-        `${v.vehiculoTipoNombre || ""} ${v.chapa || ""}`,
-        String(v.cantPasajeros ?? ""),
-        v.ticketEstacionamiento || "",
-        ESTADO_LABEL[v.estado] || v.estado || ""
-      ];
-      let x = margen + 1.5;
-      fila.forEach((valor, idx) => {
-        const maxChars = Math.floor(columnas[idx].ancho / 1.7);
-        const texto = String(valor).length > maxChars ? String(valor).slice(0, maxChars - 1) + "…" : String(valor);
-        doc.text(texto, x, y);
-        x += columnas[idx].ancho;
-      });
-      y += 5.5;
+    doc.text(`Período: ${desde} a ${hasta} — ${filas.length} ${filas.length === 1 ? "registro" : "registros"}`, 14, 28);
+    doc.autoTable({
+      startY: 33,
+      head: [config.columnas],
+      body: filas,
+      styles: { fontSize: 8, cellPadding: 2.5 },
+      headStyles: { fillColor: [31, 78, 120], textColor: 255 },
+      alternateRowStyles: { fillColor: [245, 243, 237] }
     });
+
+    let y = doc.lastAutoTable.finalY + 10;
+    const alturaPagina = doc.internal.pageSize.getHeight();
+
+    if (totales.length > 0) {
+      if (y > alturaPagina - 20) {
+        doc.addPage();
+        y = 20;
+      }
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.text("Totales", 14, y);
+      y += 6;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      for (const t of totales) {
+        doc.text(`${t.label}: ${t.valor}`, 14, y);
+        y += 6;
+      }
+    }
+
+    if (desglose && desglose.filas.length > 0) {
+      y += 4;
+      if (y > alturaPagina - 20) {
+        doc.addPage();
+        y = 20;
+      }
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.text(desglose.titulo, 14, y);
+      y += 6;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      for (const d of desglose.filas) {
+        doc.text(`${d.valor}: ${d.cantidad}`, 14, y);
+        y += 6;
+      }
+    }
+
+    doc.save(`reporte-${tipo}-${desde}-a-${hasta}.pdf`);
   }
 
-  doc.save(`detalle-${titulo.toLowerCase().replace(/\s+/g, "-")}-${desde}-a-${hasta}.pdf`);
+  return (
+    <Modal titulo={config.titulo} onClose={onClose} ancho="1100px">
+      <p style={{ fontSize: 13, color: "var(--text-muted)", marginTop: -4, marginBottom: 14 }}>
+        Período: {desde} a {hasta} — {filas.length} {filas.length === 1 ? "registro" : "registros"}
+      </p>
+      <div style={{ maxHeight: "55vh", overflow: "auto", marginBottom: 14, border: "1px solid var(--line)", borderRadius: 8 }}>
+        <table className="data-table" style={{ minWidth: "max-content" }}>
+          <thead>
+            <tr>
+              {config.columnas.map((c) => <th key={c} style={{ whiteSpace: "nowrap" }}>{c}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {filas.length === 0 ? (
+              <tr>
+                <td colSpan={config.columnas.length} style={{ textAlign: "center", color: "var(--text-muted)", padding: 20 }}>
+                  Sin registros en este período.
+                </td>
+              </tr>
+            ) : (
+              filas.map((fila, i) => (
+                <tr key={i}>
+                  {fila.map((celda, j) => <td key={j} style={{ whiteSpace: "nowrap" }}>{celda}</td>)}
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {totales.length > 0 && (
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 10,
+            marginBottom: 18,
+            padding: "12px 14px",
+            background: "var(--paper)",
+            borderRadius: 8
+          }}
+        >
+          {totales.map((t) => (
+            <div key={t.label} style={{ minWidth: 140 }}>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.03em" }}>
+                {t.label}
+              </div>
+              <div style={{ fontSize: 18, fontWeight: 700 }}>{t.valor}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {desglose && desglose.filas.length > 0 && (
+        <div style={{ marginBottom: 18 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>{desglose.titulo}</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {desglose.filas.map((d) => (
+              <div
+                key={d.valor}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "6px 12px",
+                  background: "var(--paper)",
+                  borderRadius: 20,
+                  fontSize: 13
+                }}
+              >
+                <span>{d.valor}</span>
+                <span className="badge badge-gold">{d.cantidad}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <button className="btn btn-primary" style={{ width: "100%" }} onClick={descargarPDF} disabled={filas.length === 0}>
+        Descargar PDF
+      </button>
+    </Modal>
+  );
 }
 
 function ReportesView() {
   const hoy = new Date();
   const [desde, setDesde] = useState(fechaISO(hoy));
   const [hasta, setHasta] = useState(fechaISO(hoy));
-  const [fuente, setFuente] = useState("sala");
   const [visitas, setVisitas] = useState([]);
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState("");
   const [consultado, setConsultado] = useState(false);
-  const [categoriaExpandida, setCategoriaExpandida] = useState(null);
-  const [generandoPdfCategoria, setGenerandoPdfCategoria] = useState(false);
+  const [reporteAbierto, setReporteAbierto] = useState(null);
 
   async function consultar(e) {
     if (e) e.preventDefault();
@@ -2470,42 +2564,13 @@ function ReportesView() {
     try {
       const inicio = firebase.firestore.Timestamp.fromDate(new Date(desde + "T00:00:00"));
       const fin = firebase.firestore.Timestamp.fromDate(new Date(hasta + "T23:59:59"));
-
-      const combinado = [];
-
-      if (fuente === "sala" || fuente === "ambos") {
-        const snap = await db
-          .collection("visitas")
-          .where("fechaHoraIngreso", ">=", inicio)
-          .where("fechaHoraIngreso", "<=", fin)
-          .orderBy("fechaHoraIngreso", "desc")
-          .get();
-        combinado.push(
-          ...snap.docs.map((d) => ({ id: d.id, ...d.data(), origen: "sala_guias" }))
-        );
-      }
-
-      if (fuente === "store" || fuente === "ambos") {
-        const snapStore = await db
-          .collection("registrosParisStore")
-          .where("fechaHoraIngreso", ">=", inicio)
-          .where("fechaHoraIngreso", "<=", fin)
-          .orderBy("fechaHoraIngreso", "desc")
-          .get();
-        combinado.push(
-          ...snapStore.docs.map((d) => ({
-            id: d.id,
-            ...d.data(),
-            estado: "paris_store",
-            montoAcumulado: 0,
-            montoMinimoRequerido: 0,
-            origen: "paris_store"
-          }))
-        );
-      }
-
-      combinado.sort((a, b) => (b.fechaHoraIngreso?.seconds || 0) - (a.fechaHoraIngreso?.seconds || 0));
-      setVisitas(combinado);
+      const snap = await db
+        .collection("visitas")
+        .where("fechaHoraIngreso", ">=", inicio)
+        .where("fechaHoraIngreso", "<=", fin)
+        .orderBy("fechaHoraIngreso", "desc")
+        .get();
+      setVisitas(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
       setConsultado(true);
     } catch (err) {
       console.error(err);
@@ -2543,42 +2608,6 @@ function ReportesView() {
   const enCurso = visitas.filter((v) => v.estado === "en_curso").length;
   const guiasNoLiberados = visitas.filter((v) => v.estado === "no_liberado");
 
-  const CATEGORIAS = {
-    personas: {
-      titulo: "Detalle — Personas ingresadas",
-      filas: visitas,
-      totalTexto: `Total de personas ingresadas: ${totalPersonas}`
-    },
-    vehiculos: {
-      titulo: "Detalle — Vehículos ingresados",
-      filas: visitas,
-      totalTexto: `Total de vehículos ingresados: ${totalVehiculos}`
-    },
-    liberados: {
-      titulo: "Detalle — Liberados",
-      filas: visitas.filter((v) => v.estado === "liberado"),
-      totalTexto: `Total liberados: ${liberadas}`
-    },
-    no_liberados: {
-      titulo: "Detalle — No liberados",
-      filas: guiasNoLiberados,
-      totalTexto: `Total no liberados: ${noLiberadas}`
-    }
-  };
-
-  async function descargarPdfCategoria(clave) {
-    const cat = CATEGORIAS[clave];
-    setGenerandoPdfCategoria(true);
-    try {
-      await generarPdfDetalleCategoria({ desde, hasta, titulo: cat.titulo, filas: cat.filas, totalTexto: cat.totalTexto });
-    } catch (err) {
-      console.error(err);
-      setError("No se pudo generar el PDF. Probá de nuevo.");
-    } finally {
-      setGenerandoPdfCategoria(false);
-    }
-  }
-
   return (
     <div>
       <div className="page-header">
@@ -2599,14 +2628,6 @@ function ReportesView() {
             <div className="field" style={{ marginBottom: 0 }}>
               <label>Hasta</label>
               <input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} required />
-            </div>
-            <div className="field" style={{ marginBottom: 0 }}>
-              <label>Fuente</label>
-              <select value={fuente} onChange={(e) => setFuente(e.target.value)}>
-                <option value="sala">Sala de Guías</option>
-                <option value="store">Paris Store</option>
-                <option value="ambos">Ambos</option>
-              </select>
             </div>
             <button className="btn btn-gold" disabled={cargando} style={{ width: "auto", padding: "11px 20px" }}>
               {cargando ? "Consultando..." : "Consultar"}
@@ -2629,43 +2650,61 @@ function ReportesView() {
               className="stat-card"
               role="button"
               tabIndex={0}
-              onClick={() => setCategoriaExpandida(categoriaExpandida === "personas" ? null : "personas")}
-              style={{ cursor: "pointer", borderColor: categoriaExpandida === "personas" ? "var(--gold)" : "var(--line)" }}
+              style={{ cursor: "pointer" }}
+              onClick={() => setReporteAbierto("personas")}
+              title="Ver detalle por guía"
             >
-              <div className="stat-label">Personas ingresadas {categoriaExpandida === "personas" ? "▲" : "▼"}</div>
+              <div className="stat-label">Personas ingresadas</div>
               <div className="stat-value">{totalPersonas}</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>Ver detalle →</div>
             </div>
             <div
               className="stat-card"
               role="button"
               tabIndex={0}
-              onClick={() => setCategoriaExpandida(categoriaExpandida === "vehiculos" ? null : "vehiculos")}
-              style={{ cursor: "pointer", borderColor: categoriaExpandida === "vehiculos" ? "var(--gold)" : "var(--line)" }}
+              style={{ cursor: "pointer" }}
+              onClick={() => setReporteAbierto("vehiculos")}
+              title="Ver detalle de vehículos ingresados"
             >
-              <div className="stat-label">Vehículos ingresados {categoriaExpandida === "vehiculos" ? "▲" : "▼"}</div>
+              <div className="stat-label">Vehículos ingresados</div>
               <div className="stat-value">{totalVehiculos}</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>Ver detalle →</div>
             </div>
             <div
               className="stat-card"
               role="button"
               tabIndex={0}
-              onClick={() => setCategoriaExpandida(categoriaExpandida === "liberados" ? null : "liberados")}
-              style={{ cursor: "pointer", borderColor: categoriaExpandida === "liberados" ? "var(--gold)" : "var(--line)" }}
+              style={{ cursor: "pointer" }}
+              onClick={() => setReporteAbierto("liberados")}
+              title="Ver detalle de vehículos liberados"
             >
-              <div className="stat-label">Liberados {categoriaExpandida === "liberados" ? "▲" : "▼"}</div>
+              <div className="stat-label">Liberados</div>
               <div className="stat-value" style={{ color: "var(--success)" }}>{liberadas}</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>Ver detalle →</div>
             </div>
             <div
               className="stat-card"
               role="button"
               tabIndex={0}
-              onClick={() => setCategoriaExpandida(categoriaExpandida === "no_liberados" ? null : "no_liberados")}
-              style={{ cursor: "pointer", borderColor: categoriaExpandida === "no_liberados" ? "var(--gold)" : "var(--line)" }}
+              style={{ cursor: "pointer" }}
+              onClick={() => setReporteAbierto("no_liberados")}
+              title="Ver detalle de vehículos no liberados"
             >
-              <div className="stat-label">No liberados {categoriaExpandida === "no_liberados" ? "▲" : "▼"}</div>
+              <div className="stat-label">No liberados</div>
               <div className="stat-value" style={{ color: "var(--alert)" }}>{noLiberadas}</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>Ver detalle →</div>
             </div>
           </div>
+
+          {reporteAbierto && (
+            <ModalReporteDetalle
+              tipo={reporteAbierto}
+              visitas={visitas}
+              desde={desde}
+              hasta={hasta}
+              onClose={() => setReporteAbierto(null)}
+            />
+          )}
 
           {enCurso > 0 && (
             <p style={{ fontSize: 13, color: "var(--text-muted)", marginTop: -14, marginBottom: 20 }}>
@@ -2673,57 +2712,46 @@ function ReportesView() {
             </p>
           )}
 
-          {categoriaExpandida && (
-            <div className="panel">
-              <div className="panel-header">
-                <h2>{CATEGORIAS[categoriaExpandida].titulo}</h2>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span className="badge badge-gold">{CATEGORIAS[categoriaExpandida].filas.length}</span>
-                  <button className="btn btn-ghost" onClick={() => descargarPdfCategoria(categoriaExpandida)} disabled={generandoPdfCategoria}>
-                    {generandoPdfCategoria ? "Generando..." : "⬇ Descargar PDF"}
-                  </button>
-                </div>
-              </div>
-              <div className="panel-body" style={{ padding: 0 }}>
-                {CATEGORIAS[categoriaExpandida].filas.length === 0 ? (
-                  <div className="empty-state">
-                    <div className="display">Sin registros en esta categoría</div>
-                  </div>
-                ) : (
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>Fecha</th>
-                        <th>Guía</th>
-                        <th>Empresa</th>
-                        <th>Vehículo</th>
-                        <th>Pasajeros</th>
-                        <th>Ticket</th>
-                        <th>Estado</th>
-                        {fuente === "ambos" && <th>Origen</th>}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {CATEGORIAS[categoriaExpandida].filas.map((v) => (
-                        <tr key={v.id}>
-                          <td>{formatearFechaHora(v.fechaHoraIngreso)}</td>
-                          <td>{v.guiaNombre}</td>
-                          <td>{v.empresaNombre}</td>
-                          <td>{v.vehiculoTipoNombre} · {v.chapa}</td>
-                          <td>{v.cantPasajeros}</td>
-                          <td>{v.ticketEstacionamiento}</td>
-                          <td>{badgeEstado(v.estado)}</td>
-                          {fuente === "ambos" && (
-                            <td>{v.origen === "paris_store" ? "Paris Store" : "Sala de Guías"}</td>
-                          )}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </div>
+          <div className="panel">
+            <div className="panel-header">
+              <h2>Guías no liberados</h2>
+              <span className="badge badge-alert">{guiasNoLiberados.length}</span>
             </div>
-          )}
+            <div className="panel-body" style={{ padding: 0 }}>
+              {guiasNoLiberados.length === 0 ? (
+                <div className="empty-state">
+                  <div className="display">No hubo visitas sin liberar en este período</div>
+                </div>
+              ) : (
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Fecha</th>
+                      <th>Guía</th>
+                      <th>Empresa</th>
+                      <th>Vehículo</th>
+                      <th>Pasajeros</th>
+                      <th>Monto / Mínimo</th>
+                      <th>Faltó</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {guiasNoLiberados.map((v) => (
+                      <tr key={v.id}>
+                        <td>{formatearFechaHora(v.fechaHoraIngreso)}</td>
+                        <td>{v.guiaNombre}</td>
+                        <td>{v.empresaNombre}</td>
+                        <td>{v.vehiculoTipoNombre} · {v.chapa}</td>
+                        <td>{v.cantPasajeros}</td>
+                        <td>$ {Number(v.montoAcumulado || 0).toLocaleString("es-AR")} / $ {Number(v.montoMinimoRequerido || 0).toLocaleString("es-AR")}</td>
+                        <td>$ {Math.max(0, (v.montoMinimoRequerido || 0) - (v.montoAcumulado || 0)).toLocaleString("es-AR")}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
         </React.Fragment>
       )}
     </div>
@@ -2801,7 +2829,7 @@ function RankingView({ perfil }) {
     const porGuia = {};
     visitas.forEach((v) => {
       if (!porGuia[v.guiaId]) {
-        porGuia[v.guiaId] = { guiaId: v.guiaId, guiaNombre: v.guiaNombre, pasajeros: 0, visitas: 0, monto: 0 };
+        porGuia[v.guiaId] = { guiaId: v.guiaId, guiaNombre: v.guiaNombre, empresaNombre: v.empresaNombre || "", pasajeros: 0, visitas: 0, monto: 0 };
       }
       porGuia[v.guiaId].pasajeros += Number(v.cantPasajeros) || 0;
       porGuia[v.guiaId].visitas += 1;
@@ -2869,6 +2897,7 @@ function RankingView({ perfil }) {
                   <tr>
                     <th></th>
                     <th>Guía</th>
+                    <th>Empresa</th>
                     <th>Pasajeros</th>
                     <th>Visitas</th>
                     <th>Compras</th>
@@ -2880,6 +2909,7 @@ function RankingView({ perfil }) {
                     <tr key={g.guiaId}>
                       <td style={{ fontSize: 18 }}>{medallas[i] || i + 1}</td>
                       <td>{g.guiaNombre}</td>
+                      <td>{g.empresaNombre}</td>
                       <td>{g.pasajeros}</td>
                       <td>{g.visitas}</td>
                       <td>$ {g.monto.toLocaleString("es-AR")}</td>
@@ -2969,13 +2999,38 @@ function ModalPesosFidelidad({ pesos, onGuardado, onClose }) {
 const DIAS_SEMANA = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
 const ORDEN_DIA_JS = [1, 2, 3, 4, 5, 6, 0]; // reordena getDay() (0=Dom) para empezar en lunes
 const HORAS_MAPA = Array.from({ length: 14 }, (_, i) => i + 8); // 8:00 a 21:00
+const MESES_LARGOS = [
+  "enero", "febrero", "marzo", "abril", "mayo", "junio",
+  "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"
+];
+
+// Arma la grilla de un mes calendario (semanas de lunes a domingo, con
+// celdas vacías al inicio/fin para completar la primera y última semana).
+// Cada celda marca si cae dentro del rango consultado ("enRango") para
+// pintarla distinto de los días del mes que quedaron fuera del período.
+function construirCalendarioMes(anio, mes, ingresosPorFecha, desdeDate, hastaDate) {
+  const primerDia = new Date(anio, mes, 1);
+  const ultimoDia = new Date(anio, mes + 1, 0);
+  const offsetInicio = (primerDia.getDay() + 6) % 7; // lunes=0 ... domingo=6
+  const celdas = [];
+  for (let i = 0; i < offsetInicio; i++) celdas.push(null);
+  for (let dia = 1; dia <= ultimoDia.getDate(); dia++) {
+    const fecha = new Date(anio, mes, dia);
+    const iso = fechaISO(fecha);
+    const enRango = fecha >= desdeDate && fecha <= hastaDate;
+    celdas.push({ dia, iso, valor: ingresosPorFecha[iso] || 0, enRango });
+  }
+  while (celdas.length % 7 !== 0) celdas.push(null);
+  const semanas = [];
+  for (let i = 0; i < celdas.length; i += 7) semanas.push(celdas.slice(i, i + 7));
+  return semanas;
+}
 
 function MapaCalorView() {
   const hoy = new Date();
   const inicioMes = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
   const [desde, setDesde] = useState(fechaISO(inicioMes));
   const [hasta, setHasta] = useState(fechaISO(hoy));
-  const [fuente, setFuente] = useState("sala");
   const [visitas, setVisitas] = useState([]);
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState("");
@@ -2988,27 +3043,12 @@ function MapaCalorView() {
     try {
       const inicio = firebase.firestore.Timestamp.fromDate(new Date(desde + "T00:00:00"));
       const fin = firebase.firestore.Timestamp.fromDate(new Date(hasta + "T23:59:59"));
-      const combinado = [];
-
-      if (fuente === "sala" || fuente === "ambos") {
-        const snap = await db
-          .collection("visitas")
-          .where("fechaHoraIngreso", ">=", inicio)
-          .where("fechaHoraIngreso", "<=", fin)
-          .get();
-        combinado.push(...snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      }
-
-      if (fuente === "store" || fuente === "ambos") {
-        const snapStore = await db
-          .collection("registrosParisStore")
-          .where("fechaHoraIngreso", ">=", inicio)
-          .where("fechaHoraIngreso", "<=", fin)
-          .get();
-        combinado.push(...snapStore.docs.map((d) => ({ id: d.id, ...d.data() })));
-      }
-
-      setVisitas(combinado);
+      const snap = await db
+        .collection("visitas")
+        .where("fechaHoraIngreso", ">=", inicio)
+        .where("fechaHoraIngreso", "<=", fin)
+        .get();
+      setVisitas(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
       setConsultado(true);
     } catch (err) {
       console.error(err);
@@ -3057,6 +3097,41 @@ function MapaCalorView() {
     });
   });
 
+  // --- Afluencia por fecha exacta (calendario mensual) ---
+  const ingresosPorFecha = React.useMemo(() => {
+    const mapa = {};
+    visitas.forEach((v) => {
+      if (!v.fechaHoraIngreso) return;
+      const fecha = v.fechaHoraIngreso.toDate ? v.fechaHoraIngreso.toDate() : new Date(v.fechaHoraIngreso);
+      const iso = fechaISO(fecha);
+      mapa[iso] = (mapa[iso] || 0) + 1;
+    });
+    return mapa;
+  }, [visitas]);
+
+  const desdeDate = new Date(desde + "T00:00:00");
+  const hastaDate = new Date(hasta + "T00:00:00");
+
+  const mesesEnRango = React.useMemo(() => {
+    const meses = [];
+    let cursor = new Date(desdeDate.getFullYear(), desdeDate.getMonth(), 1);
+    const fin = new Date(hastaDate.getFullYear(), hastaDate.getMonth(), 1);
+    while (cursor <= fin) {
+      meses.push({ anio: cursor.getFullYear(), mes: cursor.getMonth() });
+      cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+    }
+    return meses;
+  }, [desde, hasta]);
+
+  const maximoPorDia = Math.max(1, ...Object.values(ingresosPorFecha));
+
+  let picoDia = null;
+  Object.entries(ingresosPorFecha).forEach(([iso, valor]) => {
+    const fecha = new Date(iso + "T00:00:00");
+    if (fecha < desdeDate || fecha > hastaDate) return;
+    if (!picoDia || valor > picoDia.valor) picoDia = { iso, valor };
+  });
+
   return (
     <div>
       <div className="page-header">
@@ -3077,14 +3152,6 @@ function MapaCalorView() {
             <div className="field" style={{ marginBottom: 0 }}>
               <label>Hasta</label>
               <input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} required />
-            </div>
-            <div className="field" style={{ marginBottom: 0 }}>
-              <label>Fuente</label>
-              <select value={fuente} onChange={(e) => setFuente(e.target.value)}>
-                <option value="sala">Sala de Guías</option>
-                <option value="store">Paris Store</option>
-                <option value="ambos">Ambos</option>
-              </select>
             </div>
             <button className="btn btn-gold" disabled={cargando} style={{ width: "auto", padding: "11px 20px" }}>
               {cargando ? "Consultando..." : "Consultar"}
@@ -3162,6 +3229,81 @@ function MapaCalorView() {
                   ))}
                 </div>
                 <span>Mayor afluencia</span>
+              </div>
+            </div>
+          </div>
+
+          {picoDia && picoDia.valor > 0 && (
+            <div className="ticket" style={{ marginTop: 20, marginBottom: 20 }}>
+              <div className="ticket-stub">PICO</div>
+              <div className="ticket-perforation"></div>
+              <div className="ticket-body">
+                <h3 style={{ fontSize: 15 }}>Día de mayor afluencia</h3>
+                <p style={{ fontSize: 14, color: "var(--text-muted)", marginTop: 4 }}>
+                  {new Date(picoDia.iso + "T00:00:00").toLocaleDateString("es-PY", { weekday: "long", day: "numeric", month: "long" })}
+                  {" — "}{picoDia.valor} {picoDia.valor === 1 ? "ingreso" : "ingresos"}
+                </p>
+              </div>
+            </div>
+          )}
+
+          <div className="panel">
+            <div className="panel-body">
+              <h3 style={{ fontSize: 15, marginBottom: 4 }}>Afluencia por día</h3>
+              <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 18 }}>
+                Total de ingresos en cada fecha exacta del período consultado.
+              </p>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 28 }}>
+                {mesesEnRango.map(({ anio, mes }) => {
+                  const semanas = construirCalendarioMes(anio, mes, ingresosPorFecha, desdeDate, hastaDate);
+                  return (
+                    <div key={`${anio}-${mes}`}>
+                      <div style={{ fontWeight: 600, marginBottom: 8, textTransform: "capitalize", fontSize: 13 }}>
+                        {MESES_LARGOS[mes]} {anio}
+                      </div>
+                      <table style={{ borderCollapse: "collapse", fontSize: 11 }}>
+                        <thead>
+                          <tr>
+                            {DIAS_SEMANA.map((d) => (
+                              <th key={d} style={{ padding: "2px 4px", color: "var(--text-muted)", fontWeight: 600 }}>
+                                {d.charAt(0)}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {semanas.map((semana, si) => (
+                            <tr key={si}>
+                              {semana.map((celda, ci) => {
+                                if (!celda) return <td key={ci} style={{ padding: "6px 4px" }}></td>;
+                                const intensidad = celda.enRango
+                                  ? (celda.valor > 0 ? 0.12 + 0.8 * (celda.valor / maximoPorDia) : 0.05)
+                                  : 0.02;
+                                return (
+                                  <td
+                                    key={ci}
+                                    title={`${celda.iso} — ${celda.valor} ${celda.valor === 1 ? "ingreso" : "ingresos"}${celda.enRango ? "" : " (fuera del período consultado)"}`}
+                                    style={{
+                                      background: `rgba(184, 147, 95, ${intensidad})`,
+                                      color: celda.enRango ? (intensidad > 0.55 ? "#fff" : "var(--ink)") : "var(--text-muted)",
+                                      textAlign: "center",
+                                      padding: "6px 4px",
+                                      minWidth: 26,
+                                      borderRadius: 3,
+                                      opacity: celda.enRango ? 1 : 0.45
+                                    }}
+                                  >
+                                    {celda.dia}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -3268,7 +3410,6 @@ function ConfiguracionView({ mostrarToast }) {
 const NAV_ITEMS = [
   { id: "panel", label: "Panel", icon: "◆", permiso: null },
   { id: "visitas", label: "Visitas", icon: "◈", permiso: "registrar_visitas" },
-  { id: "parisStore", label: "Paris Store", icon: "◈", permiso: "registrar_visitas" },
   { id: "guias", label: "Guías", icon: "◈", permiso: "registrar_visitas" },
   { id: "ranking", label: "Ranking", icon: "◈", permiso: "ver_reportes" },
   { id: "mapaCalor", label: "Mapa de calor", icon: "◈", permiso: "ver_reportes" },
@@ -3284,6 +3425,21 @@ function Shell({ perfil }) {
   const [toast, setToast] = useState("");
   const [online, setOnline] = useState(navigator.onLine);
   const [logoUrl, setLogoUrl] = useState(null);
+  const [sidebarColapsado, setSidebarColapsado] = useState(() => {
+    try {
+      return localStorage.getItem("spx_sidebarColapsado") === "true";
+    } catch (err) {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("spx_sidebarColapsado", String(sidebarColapsado));
+    } catch (err) {
+      // localStorage puede fallar en modo incógnito estricto; no es crítico.
+    }
+  }, [sidebarColapsado]);
 
   useEffect(() => {
     const on = () => setOnline(true);
@@ -3310,9 +3466,6 @@ function Shell({ perfil }) {
   function renderVista() {
     if (vista === "visitas" && tienePermiso(perfil, "registrar_visitas")) {
       return <VisitasView perfil={perfil} mostrarToast={mostrarToast} />;
-    }
-    if (vista === "parisStore" && tienePermiso(perfil, "registrar_visitas")) {
-      return <ParisStoreView perfil={perfil} mostrarToast={mostrarToast} />;
     }
     if (vista === "reportes" && tienePermiso(perfil, "ver_reportes")) {
       return <ReportesView />;
@@ -3361,7 +3514,7 @@ function Shell({ perfil }) {
   }
 
   return (
-    <div className="shell">
+    <div className={`shell ${sidebarColapsado ? "sidebar-colapsado" : ""}`}>
       <aside className="sidebar">
         <div className="brand">
           {logoUrl ? (
@@ -3373,6 +3526,14 @@ function Shell({ perfil }) {
             <div className="brand-title">Shopping Paris</div>
             <div className="brand-sub">Sala de Guías</div>
           </div>
+          <button
+            className="sidebar-toggle"
+            onClick={() => setSidebarColapsado((v) => !v)}
+            title={sidebarColapsado ? "Expandir menú" : "Replegar menú"}
+            aria-label="Alternar menú"
+          >
+            {sidebarColapsado ? "»" : "«"}
+          </button>
         </div>
 
         <nav className="nav">
@@ -3381,9 +3542,11 @@ function Shell({ perfil }) {
               key={item.id}
               className={`nav-item ${vista === item.id ? "active" : ""}`}
               onClick={() => setVista(item.id)}
+              title={item.label}
             >
+              <span className="nav-icon">{item.icon}</span>
               <span className="dot"></span>
-              {item.label}
+              <span className="nav-label">{item.label}</span>
             </button>
           ))}
         </nav>
@@ -3396,8 +3559,12 @@ function Shell({ perfil }) {
               <div className="user-role">{perfil.rolNombre}</div>
             </div>
           </div>
-          <button className="link-muted" onClick={() => auth.signOut()}>Cerrar sesión</button>
-          <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.8</div>
+          <button className="link-muted" onClick={() => auth.signOut()} title="Cerrar sesión">
+            {sidebarColapsado ? "⏻" : "Cerrar sesión"}
+          </button>
+          {!sidebarColapsado && (
+            <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.12</div>
+          )}
         </div>
       </aside>
 
