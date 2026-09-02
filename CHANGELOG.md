@@ -2,6 +2,14 @@
 
 Versionado simplificado `vMAJOR.MINOR`. MAJOR = cambios de arquitectura o que rompen datos existentes. MINOR = funcionalidad nueva incremental.
 
+## v1.15 — 2026-09-02
+
+Hora de salida en el módulo Tienda.
+
+- En "Registros recientes" de Tienda, el nombre del guía ahora es clickeable y abre una ventana para cargar la **hora de salida** (precargada con la hora actual, editable). No requiere estacionamiento ni genera ningún comprobante — solo queda el dato guardado en el registro.
+- Nueva columna **"Salida"** en la tabla: muestra la hora si ya se cargó, o una etiqueta "Pendiente" si todavía no.
+- Se puede volver a abrir la ventana de un registro ya cerrado para corregir la hora si hizo falta.
+
 ## v1.14 — 2026-09-02
 
 Multi-tienda: Paris Store pasa a ser una tienda más de un catálogo.

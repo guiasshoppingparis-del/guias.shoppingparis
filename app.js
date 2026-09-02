@@ -268,7 +268,7 @@ function PanelInicio({ perfil }) {
       </div>
 
       <div className="ticket">
-        <div className="ticket-stub">v1.14</div>
+        <div className="ticket-stub">v1.15</div>
         <div className="ticket-perforation"></div>
         <div className="ticket-body">
           <h2 style={{ fontSize: 16, marginBottom: 6 }}>Versión estable</h2>
@@ -2165,6 +2165,7 @@ function TiendaView({ perfil, mostrarToast }) {
   const [registros, setRegistros] = useState([]);
   const [busqueda, setBusqueda] = useState("");
   const [registroParaEditar, setRegistroParaEditar] = useState(null);
+  const [registroParaSalida, setRegistroParaSalida] = useState(null);
 
   const misTiendaIds = perfil.tiendaIds || [];
   const misTiendas = tiendas.filter((t) => misTiendaIds.includes(t.id));
@@ -2293,6 +2294,7 @@ function TiendaView({ perfil, mostrarToast }) {
                     <th>Empresa</th>
                     <th>Vehículo</th>
                     <th>Pasajeros</th>
+                    <th>Salida</th>
                     <th></th>
                   </tr>
                 </thead>
@@ -2301,10 +2303,35 @@ function TiendaView({ perfil, mostrarToast }) {
                     <tr key={r.id}>
                       <td>{formatearFechaHora(r.fechaHoraIngreso)}</td>
                       {misTiendas.length > 1 && <td>{r.tiendaNombre}</td>}
-                      <td>{r.guiaNombre}</td>
+                      <td>
+                        <button
+                          onClick={() => setRegistroParaSalida(r)}
+                          title="Registrar hora de salida"
+                          style={{
+                            background: "none",
+                            border: "none",
+                            padding: 0,
+                            font: "inherit",
+                            color: "var(--ink)",
+                            fontWeight: 600,
+                            textDecoration: "underline",
+                            textDecorationColor: "var(--line)",
+                            cursor: "pointer"
+                          }}
+                        >
+                          {r.guiaNombre}
+                        </button>
+                      </td>
                       <td>{r.empresaNombre}</td>
                       <td>{r.vehiculoTipoNombre} · {r.chapa}</td>
                       <td>{r.cantPasajeros}</td>
+                      <td>
+                        {r.fechaHoraSalida ? (
+                          formatearFechaHora(r.fechaHoraSalida)
+                        ) : (
+                          <span className="badge badge-muted">Pendiente</span>
+                        )}
+                      </td>
                       <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                         <button className="icon-btn" onClick={() => setRegistroParaEditar(r)} title="Editar">✎</button>
                         <button className="icon-btn" onClick={() => anularRegistro(r)} title="Anular" style={{ color: "var(--alert)" }}>✕</button>
@@ -2325,6 +2352,14 @@ function TiendaView({ perfil, mostrarToast }) {
           tiposVehiculo={tiposVehiculo}
           misTiendas={misTiendas}
           onClose={() => setRegistroParaEditar(null)}
+          mostrarToast={mostrarToast}
+        />
+      )}
+
+      {registroParaSalida && (
+        <ModalRegistrarSalidaTienda
+          registro={registroParaSalida}
+          onClose={() => setRegistroParaSalida(null)}
           mostrarToast={mostrarToast}
         />
       )}
@@ -2637,6 +2672,71 @@ function ModalEditarRegistroTienda({ registro, empresas, tiposVehiculo, misTiend
         <div className="field">
           <label>Ticket de estacionamiento (opcional)</label>
           <input value={ticket} onChange={(e) => setTicket(e.target.value.toUpperCase())} />
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function ModalRegistrarSalidaTienda({ registro, onClose, mostrarToast }) {
+  const [horaSalida, setHoraSalida] = useState(horaActualHHMM());
+  const [cargando, setCargando] = useState(false);
+  const [error, setError] = useState("");
+
+  async function guardar(e) {
+    e.preventDefault();
+    if (!horaSalida) {
+      setError("Ingresá la hora de salida.");
+      return;
+    }
+    setError("");
+    setCargando(true);
+    try {
+      const [hh, mm] = horaSalida.split(":").map(Number);
+      const fechaHoraSalida = new Date();
+      fechaHoraSalida.setHours(hh, mm, 0, 0);
+
+      await db.collection("registrosTienda").doc(registro.id).update({
+        fechaHoraSalida: firebase.firestore.Timestamp.fromDate(fechaHoraSalida)
+      });
+      mostrarToast(`Salida registrada: ${registro.guiaNombre}`);
+      onClose();
+    } catch (err) {
+      console.error(err);
+      setError("No se pudo registrar la salida. Probá de nuevo.");
+    } finally {
+      setCargando(false);
+    }
+  }
+
+  return (
+    <Modal
+      titulo={`Registrar salida — ${registro.guiaNombre}`}
+      onClose={onClose}
+      footer={
+        <React.Fragment>
+          <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-gold" onClick={guardar} disabled={cargando}>
+            {cargando ? "Guardando..." : "Registrar salida"}
+          </button>
+        </React.Fragment>
+      }
+    >
+      {error && <div className="form-error">{error}</div>}
+
+      <div className="ticket-meta" style={{ marginBottom: 16 }}>
+        <span><strong>Empresa:</strong> {registro.empresaNombre}</span>
+        <span><strong>Vehículo:</strong> {registro.vehiculoTipoNombre} · {registro.chapa}</span>
+        <span><strong>Ingreso:</strong> {formatearFechaHora(registro.fechaHoraIngreso)}</span>
+        {registro.fechaHoraSalida && (
+          <span><strong>Salida ya cargada:</strong> {formatearFechaHora(registro.fechaHoraSalida)}</span>
+        )}
+      </div>
+
+      <form onSubmit={guardar}>
+        <div className="field">
+          <label>Hora de salida</label>
+          <input type="time" value={horaSalida} onChange={(e) => setHoraSalida(e.target.value)} required autoFocus />
         </div>
       </form>
     </Modal>
@@ -4131,7 +4231,7 @@ function Shell({ perfil }) {
             {sidebarColapsado ? "⏻" : "Cerrar sesión"}
           </button>
           {!sidebarColapsado && (
-            <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.14</div>
+            <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.15</div>
           )}
         </div>
       </aside>
