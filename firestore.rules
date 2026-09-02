@@ -65,9 +65,14 @@ service cloud.firestore {
       allow write: if estaLogueado()
         && (tienePermiso('registrar_visitas') || tienePermiso('liberar_estacionamiento'));
     }
-    // Módulo Paris Store: carga básica de datos desde un punto distinto a la
-    // sala de guías, sin manejo de estacionamiento ni impresión de tickets.
-    match /registrosParisStore/{registroId} {
+    match /tiendas/{tiendaId} {
+      allow read: if estaLogueado();
+      allow write: if estaLogueado() && tienePermiso('gestionar_catalogos');
+    }
+    // Módulo Tienda: carga básica de datos desde puntos de venta del shopping
+    // (Paris Store y las que se sumen después), sin manejo de estacionamiento
+    // ni impresión de tickets. Cada registro queda etiquetado con su tienda.
+    match /registrosTienda/{registroId} {
       allow read: if estaLogueado();
       allow create: if estaLogueado() && tienePermiso('registrar_visitas');
       allow update: if estaLogueado() && tienePermiso('registrar_visitas');

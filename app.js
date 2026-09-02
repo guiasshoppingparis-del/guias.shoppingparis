@@ -268,7 +268,7 @@ function PanelInicio({ perfil }) {
       </div>
 
       <div className="ticket">
-        <div className="ticket-stub">v1.13</div>
+        <div className="ticket-stub">v1.14</div>
         <div className="ticket-perforation"></div>
         <div className="ticket-body">
           <h2 style={{ fontSize: 16, marginBottom: 6 }}>Versión estable</h2>
@@ -291,6 +291,7 @@ function PanelInicio({ perfil }) {
 function UsuariosView({ mostrarToast }) {
   const [usuarios, setUsuarios] = useState([]);
   const [roles, setRoles] = useState([]);
+  const [tiendas, setTiendas] = useState([]);
   const [modalUsuario, setModalUsuario] = useState(null); // null | {} para nuevo | objeto para editar
   const [modalRol, setModalRol] = useState(null);
   const [tab, setTab] = useState("usuarios");
@@ -302,9 +303,13 @@ function UsuariosView({ mostrarToast }) {
     const r = db.collection("roles").onSnapshot((snap) =>
       setRoles(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
     );
+    const t = db.collection("tiendas").orderBy("nombre").onSnapshot((snap) =>
+      setTiendas(snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((x) => x.activo !== false))
+    );
     return () => {
       u();
       r();
+      t();
     };
   }, []);
 
@@ -362,6 +367,7 @@ function UsuariosView({ mostrarToast }) {
                     <th>Nombre</th>
                     <th>Email</th>
                     <th>Rol</th>
+                    <th>Tienda(s)</th>
                     <th>Estado</th>
                     <th></th>
                   </tr>
@@ -377,6 +383,18 @@ function UsuariosView({ mostrarToast }) {
                       </td>
                       <td>{u.email}</td>
                       <td><span className="badge badge-gold">{nombreRol(u.rolId)}</span></td>
+                      <td>
+                        {(u.tiendaIds || []).length === 0 ? (
+                          <span className="badge badge-muted">Sala de guías</span>
+                        ) : (
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                            {(u.tiendaIds || []).map((tid) => {
+                              const t = tiendas.find((x) => x.id === tid);
+                              return <span key={tid} className="badge badge-muted">{t ? t.nombre : "?"}</span>;
+                            })}
+                          </div>
+                        )}
+                      </td>
                       <td>
                         {u.activo ? (
                           <span className="badge badge-success">Activo</span>
@@ -439,6 +457,7 @@ function UsuariosView({ mostrarToast }) {
         <ModalUsuario
           usuario={modalUsuario}
           roles={roles}
+          tiendas={tiendas}
           onClose={() => setModalUsuario(null)}
           mostrarToast={mostrarToast}
         />
@@ -450,15 +469,20 @@ function UsuariosView({ mostrarToast }) {
   );
 }
 
-function ModalUsuario({ usuario, roles, onClose, mostrarToast }) {
+function ModalUsuario({ usuario, roles, tiendas, onClose, mostrarToast }) {
   const esNuevo = !usuario.id;
   const [nombre, setNombre] = useState(usuario.nombre || "");
   const [email, setEmail] = useState(usuario.email || "");
   const [password, setPassword] = useState("");
   const [rolId, setRolId] = useState(usuario.rolId || (roles[0] && roles[0].id) || "");
+  const [tiendaIds, setTiendaIds] = useState(usuario.tiendaIds || []);
   const [activo, setActivo] = useState(usuario.activo !== false);
   const [error, setError] = useState("");
   const [cargando, setCargando] = useState(false);
+
+  function toggleTienda(id) {
+    setTiendaIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
 
   async function guardar(e) {
     e.preventDefault();
@@ -477,13 +501,14 @@ function ModalUsuario({ usuario, roles, onClose, mostrarToast }) {
           nombre,
           email,
           rolId,
+          tiendaIds,
           activo,
           creadoEn: firebase.firestore.FieldValue.serverTimestamp()
         });
         await secondaryAuth.signOut();
         mostrarToast("Usuario creado. Ya puede ingresar con su email y contraseña.");
       } else {
-        await db.collection("usuarios").doc(usuario.id).update({ nombre, rolId, activo });
+        await db.collection("usuarios").doc(usuario.id).update({ nombre, rolId, tiendaIds, activo });
         mostrarToast("Usuario actualizado.");
       }
       onClose();
@@ -536,6 +561,32 @@ function ModalUsuario({ usuario, roles, onClose, mostrarToast }) {
               <option key={r.id} value={r.id}>{r.nombre}</option>
             ))}
           </select>
+        </div>
+        <div className="field">
+          <label>Tiendas asignadas</label>
+          <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: -2, marginBottom: 8 }}>
+            Sin ninguna marcada, el usuario entra por "Visitas" (sala de guías). Con al menos una
+            marcada, entra por "Tienda" en cambio, y no ve "Visitas".
+          </p>
+          {tiendas.length === 0 ? (
+            <p style={{ fontSize: 13, color: "var(--text-muted)" }}>
+              Todavía no hay tiendas cargadas — se pueden crear desde "Tiendas" en el menú.
+            </p>
+          ) : (
+            <div className="checkbox-list">
+              {tiendas.map((t) => (
+                <div className="checkbox-row" key={t.id}>
+                  <input
+                    type="checkbox"
+                    id={`tienda-${t.id}`}
+                    checked={tiendaIds.includes(t.id)}
+                    onChange={() => toggleTienda(t.id)}
+                  />
+                  <label htmlFor={`tienda-${t.id}`}>{t.nombre}</label>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
         <div className="checkbox-row">
           <input type="checkbox" checked={activo} onChange={(e) => setActivo(e.target.checked)} id="activo" />
@@ -2101,17 +2152,22 @@ function ModalGuia({ guia, onClose, mostrarToast }) {
 }
 
 // ---------------------------------------------------------------------------
-// Vista: Paris Store — carga básica de datos, sin manejo de estacionamiento
-// ni impresión de comprobantes. Punto de atención distinto a la sala de guías.
+// Vista: Tienda — carga básica de datos desde un punto de venta del shopping,
+// sin manejo de estacionamiento ni impresión de comprobantes. Un usuario
+// puede estar asignado a una o varias tiendas (perfil.tiendaIds).
 // ---------------------------------------------------------------------------
 
-function ParisStoreView({ perfil, mostrarToast }) {
+function TiendaView({ perfil, mostrarToast }) {
   const [guias, setGuias] = useState([]);
   const [empresas, setEmpresas] = useState([]);
   const [tiposVehiculo, setTiposVehiculo] = useState([]);
+  const [tiendas, setTiendas] = useState([]);
   const [registros, setRegistros] = useState([]);
   const [busqueda, setBusqueda] = useState("");
   const [registroParaEditar, setRegistroParaEditar] = useState(null);
+
+  const misTiendaIds = perfil.tiendaIds || [];
+  const misTiendas = tiendas.filter((t) => misTiendaIds.includes(t.id));
 
   useEffect(() => {
     const u1 = db.collection("guias").orderBy("nombre").onSnapshot((s) =>
@@ -2123,16 +2179,22 @@ function ParisStoreView({ perfil, mostrarToast }) {
     const u3 = db.collection("tiposVehiculo").orderBy("nombre").onSnapshot((s) =>
       setTiposVehiculo(s.docs.map((d) => ({ id: d.id, ...d.data() })).filter((t) => t.activo !== false))
     );
-    const u4 = db
-      .collection("registrosParisStore")
+    const u4 = db.collection("tiendas").orderBy("nombre").onSnapshot((s) =>
+      setTiendas(s.docs.map((d) => ({ id: d.id, ...d.data() })).filter((t) => t.activo !== false))
+    );
+    // Se trae un lote grande y se filtra por tienda del lado del cliente,
+    // para no necesitar un índice compuesto en Firestore (where "in" + orderBy).
+    const u5 = db
+      .collection("registrosTienda")
       .orderBy("fechaHoraIngreso", "desc")
-      .limit(50)
+      .limit(200)
       .onSnapshot((s) => setRegistros(s.docs.map((d) => ({ id: d.id, ...d.data() }))));
     return () => {
       u1();
       u2();
       u3();
       u4();
+      u5();
     };
   }, []);
 
@@ -2142,7 +2204,7 @@ function ParisStoreView({ perfil, mostrarToast }) {
     );
     if (!confirmar) return;
     try {
-      await db.collection("registrosParisStore").doc(r.id).delete();
+      await db.collection("registrosTienda").doc(r.id).delete();
       mostrarToast("Registro anulado.");
     } catch (err) {
       console.error(err);
@@ -2150,26 +2212,48 @@ function ParisStoreView({ perfil, mostrarToast }) {
     }
   }
 
+  const registrosDeMisTiendas = registros
+    .filter((r) => misTiendaIds.includes(r.tiendaId))
+    .slice(0, 50);
+
   const registrosFiltrados = busqueda.trim()
-    ? registros.filter((r) => (r.guiaNombre || "").toLowerCase().includes(busqueda.trim().toLowerCase()))
-    : registros;
+    ? registrosDeMisTiendas.filter((r) => (r.guiaNombre || "").toLowerCase().includes(busqueda.trim().toLowerCase()))
+    : registrosDeMisTiendas;
+
+  if (misTiendas.length === 0) {
+    return (
+      <div>
+        <div className="page-header">
+          <div>
+            <div className="page-eyebrow">Tienda</div>
+            <h1>Sin tienda asignada</h1>
+            <p className="page-desc">
+              Tu usuario todavía no tiene ninguna tienda asignada. Pedile a un Admin que te
+              asigne una desde "Usuarios y roles".
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div>
       <div className="page-header">
         <div>
-          <div className="page-eyebrow">Paris Store</div>
-          <h1>Paris Store</h1>
+          <div className="page-eyebrow">Tienda</div>
+          <h1>{misTiendas.length === 1 ? misTiendas[0].nombre : "Registro de tienda"}</h1>
           <p className="page-desc">
             Carga de datos desde este punto de atención. No maneja estacionamiento ni imprime comprobantes.
           </p>
         </div>
       </div>
 
-      <FormularioParisStore
+      <FormularioRegistroTienda
         guias={guias}
         empresas={empresas}
         tiposVehiculo={tiposVehiculo}
+        misTiendas={misTiendas}
         perfil={perfil}
         mostrarToast={mostrarToast}
       />
@@ -2184,12 +2268,12 @@ function ParisStoreView({ perfil, mostrarToast }) {
             placeholder="Buscar por nombre de guía..."
             style={{ flex: "1 1 240px", maxWidth: 420, padding: "8px 12px", border: "1px solid var(--line)", borderRadius: 8 }}
           />
-          <span className="badge badge-gold" style={{ marginLeft: "auto" }}>{registros.length}</span>
+          <span className="badge badge-gold" style={{ marginLeft: "auto" }}>{registrosDeMisTiendas.length}</span>
         </div>
 
         <div className="panel">
           <div className="panel-body" style={{ padding: 0 }}>
-            {registros.length === 0 ? (
+            {registrosDeMisTiendas.length === 0 ? (
               <div className="empty-state">
                 <div className="display">Todavía no hay registros</div>
                 <p>Los que cargues acá van a aparecer en esta lista.</p>
@@ -2204,6 +2288,7 @@ function ParisStoreView({ perfil, mostrarToast }) {
                 <thead>
                   <tr>
                     <th>Fecha</th>
+                    {misTiendas.length > 1 && <th>Tienda</th>}
                     <th>Guía</th>
                     <th>Empresa</th>
                     <th>Vehículo</th>
@@ -2215,6 +2300,7 @@ function ParisStoreView({ perfil, mostrarToast }) {
                   {registrosFiltrados.map((r) => (
                     <tr key={r.id}>
                       <td>{formatearFechaHora(r.fechaHoraIngreso)}</td>
+                      {misTiendas.length > 1 && <td>{r.tiendaNombre}</td>}
                       <td>{r.guiaNombre}</td>
                       <td>{r.empresaNombre}</td>
                       <td>{r.vehiculoTipoNombre} · {r.chapa}</td>
@@ -2233,10 +2319,11 @@ function ParisStoreView({ perfil, mostrarToast }) {
       </div>
 
       {registroParaEditar && (
-        <ModalEditarRegistroParisStore
+        <ModalEditarRegistroTienda
           registro={registroParaEditar}
           empresas={empresas}
           tiposVehiculo={tiposVehiculo}
+          misTiendas={misTiendas}
           onClose={() => setRegistroParaEditar(null)}
           mostrarToast={mostrarToast}
         />
@@ -2245,10 +2332,11 @@ function ParisStoreView({ perfil, mostrarToast }) {
   );
 }
 
-function FormularioParisStore({ guias, empresas, tiposVehiculo, perfil, mostrarToast }) {
+function FormularioRegistroTienda({ guias, empresas, tiposVehiculo, misTiendas, perfil, mostrarToast }) {
   const [nombreGuia, setNombreGuia] = useState("");
   const [guiaSeleccionado, setGuiaSeleccionado] = useState(null);
   const [mostrarSugerencias, setMostrarSugerencias] = useState(false);
+  const [tiendaId, setTiendaId] = useState(misTiendas.length === 1 ? misTiendas[0].id : "");
   const [empresaId, setEmpresaId] = useState("");
   const [cantPasajeros, setCantPasajeros] = useState("");
   const [vehiculoTipoId, setVehiculoTipoId] = useState("");
@@ -2284,13 +2372,15 @@ function FormularioParisStore({ guias, empresas, tiposVehiculo, perfil, mostrarT
     setChapa("");
     setTicket("");
     setHoraIngreso(horaActualHHMM());
+    // La tienda seleccionada se mantiene entre registros (uso típico: varios
+    // ingresos seguidos para la misma tienda), salvo que solo haya una.
   }
 
   async function registrar(e) {
     e.preventDefault();
     setError("");
-    if (!nombreGuia.trim() || !empresaId || !vehiculoTipoId || !chapa.trim() || !cantPasajeros) {
-      setError("Completá guía, empresa, pasajeros, tipo de vehículo y chapa.");
+    if (!nombreGuia.trim() || !tiendaId || !empresaId || !vehiculoTipoId || !chapa.trim() || !cantPasajeros) {
+      setError("Completá tienda, guía, empresa, pasajeros, tipo de vehículo y chapa.");
       return;
     }
     setCargando(true);
@@ -2304,6 +2394,7 @@ function FormularioParisStore({ guias, empresas, tiposVehiculo, perfil, mostrarT
         guiaId = nuevoGuia.id;
       }
 
+      const tienda = misTiendas.find((t) => t.id === tiendaId);
       const empresa = empresas.find((e) => e.id === empresaId);
       const tipoVehiculo = tiposVehiculo.find((t) => t.id === vehiculoTipoId);
 
@@ -2311,7 +2402,9 @@ function FormularioParisStore({ guias, empresas, tiposVehiculo, perfil, mostrarT
       const fechaHoraIngreso = new Date();
       fechaHoraIngreso.setHours(hh, mm, 0, 0);
 
-      await db.collection("registrosParisStore").add({
+      await db.collection("registrosTienda").add({
+        tiendaId,
+        tiendaNombre: tienda ? tienda.nombre : "",
         guiaId,
         guiaNombre: nombreGuia.trim(),
         empresaId,
@@ -2344,6 +2437,18 @@ function FormularioParisStore({ guias, empresas, tiposVehiculo, perfil, mostrarT
       <div className="panel-body">
         {error && <div className="form-error">{error}</div>}
         <form onSubmit={registrar}>
+          {misTiendas.length > 1 && (
+            <div className="field">
+              <label>Tienda</label>
+              <select value={tiendaId} onChange={(e) => setTiendaId(e.target.value)} required>
+                <option value="">Seleccionar…</option>
+                {misTiendas.map((t) => (
+                  <option key={t.id} value={t.id}>{t.nombre}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <div className="field autocomplete">
             <label>Guía</label>
             <input
@@ -2423,7 +2528,8 @@ function FormularioParisStore({ guias, empresas, tiposVehiculo, perfil, mostrarT
   );
 }
 
-function ModalEditarRegistroParisStore({ registro, empresas, tiposVehiculo, onClose, mostrarToast }) {
+function ModalEditarRegistroTienda({ registro, empresas, tiposVehiculo, misTiendas, onClose, mostrarToast }) {
+  const [tiendaId, setTiendaId] = useState(registro.tiendaId || "");
   const [nombreGuia, setNombreGuia] = useState(registro.guiaNombre || "");
   const [empresaId, setEmpresaId] = useState(registro.empresaId || "");
   const [cantPasajeros, setCantPasajeros] = useState(registro.cantPasajeros || "");
@@ -2435,17 +2541,20 @@ function ModalEditarRegistroParisStore({ registro, empresas, tiposVehiculo, onCl
 
   async function guardar(e) {
     e.preventDefault();
-    if (!nombreGuia.trim() || !empresaId || !vehiculoTipoId || !chapa.trim() || !cantPasajeros) {
+    if (!tiendaId || !nombreGuia.trim() || !empresaId || !vehiculoTipoId || !chapa.trim() || !cantPasajeros) {
       setError("Completá todos los campos obligatorios.");
       return;
     }
     setError("");
     setCargando(true);
     try {
+      const tienda = misTiendas.find((t) => t.id === tiendaId);
       const empresa = empresas.find((e) => e.id === empresaId);
       const tipoVehiculo = tiposVehiculo.find((t) => t.id === vehiculoTipoId);
 
-      await db.collection("registrosParisStore").doc(registro.id).update({
+      await db.collection("registrosTienda").doc(registro.id).update({
+        tiendaId,
+        tiendaNombre: tienda ? tienda.nombre : registro.tiendaNombre || "",
         guiaNombre: nombreGuia.trim(),
         empresaId,
         empresaNombre: empresa ? empresa.nombre : "",
@@ -2480,6 +2589,17 @@ function ModalEditarRegistroParisStore({ registro, empresas, tiposVehiculo, onCl
     >
       {error && <div className="form-error">{error}</div>}
       <form onSubmit={guardar}>
+        {misTiendas.length > 1 && (
+          <div className="field">
+            <label>Tienda</label>
+            <select value={tiendaId} onChange={(e) => setTiendaId(e.target.value)} required>
+              <option value="">Seleccionar…</option>
+              {misTiendas.map((t) => (
+                <option key={t.id} value={t.id}>{t.nombre}</option>
+              ))}
+            </select>
+          </div>
+        )}
         <div className="field">
           <label>Guía</label>
           <input value={nombreGuia} onChange={(e) => setNombreGuia(e.target.value.toUpperCase())} required />
@@ -3833,7 +3953,7 @@ function ConfiguracionView({ mostrarToast }) {
 const NAV_ITEMS = [
   { id: "panel", label: "Panel", icon: "◆", permiso: null },
   { id: "visitas", label: "Visitas", icon: "◈", permiso: "registrar_visitas" },
-  { id: "parisStore", label: "Paris Store", icon: "◈", permiso: "registrar_visitas" },
+  { id: "tienda", label: "Tienda", icon: "◈", permiso: "registrar_visitas" },
   { id: "guias", label: "Guías", icon: "◈", permiso: "registrar_visitas" },
   { id: "ranking", label: "Ranking", icon: "◈", permiso: "ver_reportes" },
   { id: "mapaCalor", label: "Mapa de calor", icon: "◈", permiso: "ver_reportes" },
@@ -3841,6 +3961,7 @@ const NAV_ITEMS = [
   { id: "usuarios", label: "Usuarios y roles", icon: "◈", permiso: "gestionar_usuarios" },
   { id: "empresas", label: "Empresas", icon: "◇", permiso: "gestionar_catalogos" },
   { id: "vehiculos", label: "Tipos de vehículo", icon: "◇", permiso: "gestionar_catalogos" },
+  { id: "tiendas", label: "Tiendas", icon: "◇", permiso: "gestionar_catalogos" },
   { id: "configuracion", label: "Configuración", icon: "◇", permiso: "gestionar_catalogos" }
 ];
 
@@ -3885,14 +4006,23 @@ function Shell({ perfil }) {
 
   const mostrarToast = useCallback((msg) => setToast(msg), []);
 
-  const itemsVisibles = NAV_ITEMS.filter((i) => !i.permiso || tienePermiso(perfil, i.permiso));
+  // Un usuario con tiendas asignadas (perfil.tiendaIds) entra por "Tienda" y
+  // no ve "Visitas" — eso es exclusivo de la sala de guías. El resto de los
+  // ítems se filtra solo por permiso, como siempre.
+  const tieneTiendaAsignada = (perfil.tiendaIds || []).length > 0;
+  const itemsVisibles = NAV_ITEMS.filter((i) => {
+    if (i.permiso && !tienePermiso(perfil, i.permiso)) return false;
+    if (i.id === "visitas" && tieneTiendaAsignada) return false;
+    if (i.id === "tienda" && !tieneTiendaAsignada) return false;
+    return true;
+  });
 
   function renderVista() {
-    if (vista === "visitas" && tienePermiso(perfil, "registrar_visitas")) {
+    if (vista === "visitas" && tienePermiso(perfil, "registrar_visitas") && !tieneTiendaAsignada) {
       return <VisitasView perfil={perfil} mostrarToast={mostrarToast} />;
     }
-    if (vista === "parisStore" && tienePermiso(perfil, "registrar_visitas")) {
-      return <ParisStoreView perfil={perfil} mostrarToast={mostrarToast} />;
+    if (vista === "tienda" && tienePermiso(perfil, "registrar_visitas") && tieneTiendaAsignada) {
+      return <TiendaView perfil={perfil} mostrarToast={mostrarToast} />;
     }
     if (vista === "reportes" && tienePermiso(perfil, "ver_reportes")) {
       return <ReportesView />;
@@ -3933,6 +4063,17 @@ function Shell({ perfil }) {
             { id: "nombre", label: "Tipo de vehículo" },
             { id: "montoMinimoCompra", label: "Monto mínimo", tipo: "moneda" }
           ]}
+          mostrarToast={mostrarToast}
+        />
+      );
+    }
+    if (vista === "tiendas" && tienePermiso(perfil, "gestionar_catalogos")) {
+      return (
+        <CatalogoView
+          titulo="Tiendas"
+          descripcion="Tiendas del shopping que cargan sus propios registros, aparte de la sala de guías."
+          coleccion="tiendas"
+          campos={[{ id: "nombre", label: "Nombre" }]}
           mostrarToast={mostrarToast}
         />
       );
@@ -3990,7 +4131,7 @@ function Shell({ perfil }) {
             {sidebarColapsado ? "⏻" : "Cerrar sesión"}
           </button>
           {!sidebarColapsado && (
-            <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.13</div>
+            <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.14</div>
           )}
         </div>
       </aside>

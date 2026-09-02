@@ -2,6 +2,16 @@
 
 Versionado simplificado `vMAJOR.MINOR`. MAJOR = cambios de arquitectura o que rompen datos existentes. MINOR = funcionalidad nueva incremental.
 
+## v1.14 — 2026-09-02
+
+Multi-tienda: Paris Store pasa a ser una tienda más de un catálogo.
+
+- Nuevo catálogo **"Tiendas"** (solo Admin, permiso `gestionar_catalogos`), igual que Empresas o Tipos de vehículo.
+- Cada **usuario** puede quedar asignado a una o varias tiendas (campo `tiendaIds`), editable desde "Usuarios y roles" con checkboxes. La tabla de usuarios muestra qué tienda(s) tiene cada uno.
+- El módulo que antes era "Paris Store" ahora es **"Tienda"**, genérico para cualquier tienda del catálogo. Si el usuario tiene más de una tienda asignada, el formulario le pide elegir a cuál corresponde cada registro; con una sola, se usa automáticamente.
+- **Acceso exclusivo**: un usuario con alguna tienda asignada ve "Tienda" en el menú y **no ve "Visitas"** (eso queda exclusivo de la sala de guías); un usuario sin tiendas asignadas ve "Visitas" como siempre y no ve "Tienda". Mismo permiso `registrar_visitas` para ambos casos, la diferencia la marca `tiendaIds`.
+- La colección `registrosParisStore` se renombra a `registrosTienda`, con `tiendaId`/`tiendaNombre` en cada registro. **Los registros viejos que ya estaban en `registrosParisStore` quedan en esa colección** (no se migraron automáticamente) — si hace falta pasarlos a la nueva, se puede hacer manualmente después de crear la tienda "Paris Store" en el catálogo nuevo.
+
 ## v1.13 — 2026-09-02
 
 Nuevo módulo Paris Store + corrección de permisos.
