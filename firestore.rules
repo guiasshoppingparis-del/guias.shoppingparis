@@ -51,7 +51,10 @@ service cloud.firestore {
       allow create: if estaLogueado() && tienePermiso('registrar_visitas');
       allow update: if estaLogueado()
         && (tienePermiso('registrar_visitas') || tienePermiso('liberar_estacionamiento'));
-      allow delete: if estaLogueado() && tienePermiso('gestionar_usuarios');
+      // Corregido: el botón "Anular visita" de la interfaz es visible para
+      // quien tiene "registrar_visitas" (Encargado de Sala), no solo Admin.
+      allow delete: if estaLogueado()
+        && (tienePermiso('registrar_visitas') || tienePermiso('gestionar_usuarios'));
     }
     // Contadores atómicos para la numeración secuencial de liberaciones
     // (contadores/liberaciones) y permisos de salida (contadores/permisosSalida).
@@ -61,6 +64,15 @@ service cloud.firestore {
       allow read: if estaLogueado();
       allow write: if estaLogueado()
         && (tienePermiso('registrar_visitas') || tienePermiso('liberar_estacionamiento'));
+    }
+    // Módulo Paris Store: carga básica de datos desde un punto distinto a la
+    // sala de guías, sin manejo de estacionamiento ni impresión de tickets.
+    match /registrosParisStore/{registroId} {
+      allow read: if estaLogueado();
+      allow create: if estaLogueado() && tienePermiso('registrar_visitas');
+      allow update: if estaLogueado() && tienePermiso('registrar_visitas');
+      allow delete: if estaLogueado()
+        && (tienePermiso('registrar_visitas') || tienePermiso('gestionar_usuarios'));
     }
     match /config/{docId} {
       // Lectura pública: la app necesita saber si falta el setup inicial

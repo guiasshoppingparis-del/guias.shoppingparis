@@ -268,7 +268,7 @@ function PanelInicio({ perfil }) {
       </div>
 
       <div className="ticket">
-        <div className="ticket-stub">v1.12</div>
+        <div className="ticket-stub">v1.13</div>
         <div className="ticket-perforation"></div>
         <div className="ticket-body">
           <h2 style={{ fontSize: 16, marginBottom: 6 }}>Versión estable</h2>
@@ -2101,6 +2101,429 @@ function ModalGuia({ guia, onClose, mostrarToast }) {
 }
 
 // ---------------------------------------------------------------------------
+// Vista: Paris Store — carga básica de datos, sin manejo de estacionamiento
+// ni impresión de comprobantes. Punto de atención distinto a la sala de guías.
+// ---------------------------------------------------------------------------
+
+function ParisStoreView({ perfil, mostrarToast }) {
+  const [guias, setGuias] = useState([]);
+  const [empresas, setEmpresas] = useState([]);
+  const [tiposVehiculo, setTiposVehiculo] = useState([]);
+  const [registros, setRegistros] = useState([]);
+  const [busqueda, setBusqueda] = useState("");
+  const [registroParaEditar, setRegistroParaEditar] = useState(null);
+
+  useEffect(() => {
+    const u1 = db.collection("guias").orderBy("nombre").onSnapshot((s) =>
+      setGuias(s.docs.map((d) => ({ id: d.id, ...d.data() })))
+    );
+    const u2 = db.collection("empresas").orderBy("nombre").onSnapshot((s) =>
+      setEmpresas(s.docs.map((d) => ({ id: d.id, ...d.data() })).filter((e) => e.activo !== false))
+    );
+    const u3 = db.collection("tiposVehiculo").orderBy("nombre").onSnapshot((s) =>
+      setTiposVehiculo(s.docs.map((d) => ({ id: d.id, ...d.data() })).filter((t) => t.activo !== false))
+    );
+    const u4 = db
+      .collection("registrosParisStore")
+      .orderBy("fechaHoraIngreso", "desc")
+      .limit(50)
+      .onSnapshot((s) => setRegistros(s.docs.map((d) => ({ id: d.id, ...d.data() }))));
+    return () => {
+      u1();
+      u2();
+      u3();
+      u4();
+    };
+  }, []);
+
+  async function anularRegistro(r) {
+    const confirmar = window.confirm(
+      `¿Anular el registro de "${r.guiaNombre}"? No se puede deshacer.`
+    );
+    if (!confirmar) return;
+    try {
+      await db.collection("registrosParisStore").doc(r.id).delete();
+      mostrarToast("Registro anulado.");
+    } catch (err) {
+      console.error(err);
+      mostrarToast("No se pudo anular el registro.");
+    }
+  }
+
+  const registrosFiltrados = busqueda.trim()
+    ? registros.filter((r) => (r.guiaNombre || "").toLowerCase().includes(busqueda.trim().toLowerCase()))
+    : registros;
+
+  return (
+    <div>
+      <div className="page-header">
+        <div>
+          <div className="page-eyebrow">Paris Store</div>
+          <h1>Paris Store</h1>
+          <p className="page-desc">
+            Carga de datos desde este punto de atención. No maneja estacionamiento ni imprime comprobantes.
+          </p>
+        </div>
+      </div>
+
+      <FormularioParisStore
+        guias={guias}
+        empresas={empresas}
+        tiposVehiculo={tiposVehiculo}
+        perfil={perfil}
+        mostrarToast={mostrarToast}
+      />
+
+      <div style={{ marginTop: 32 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 14, flexWrap: "wrap" }}>
+          <h2 style={{ fontSize: 18, whiteSpace: "nowrap" }}>Registros recientes</h2>
+          <input
+            type="text"
+            value={busqueda}
+            onChange={(e) => setBusqueda(e.target.value)}
+            placeholder="Buscar por nombre de guía..."
+            style={{ flex: "1 1 240px", maxWidth: 420, padding: "8px 12px", border: "1px solid var(--line)", borderRadius: 8 }}
+          />
+          <span className="badge badge-gold" style={{ marginLeft: "auto" }}>{registros.length}</span>
+        </div>
+
+        <div className="panel">
+          <div className="panel-body" style={{ padding: 0 }}>
+            {registros.length === 0 ? (
+              <div className="empty-state">
+                <div className="display">Todavía no hay registros</div>
+                <p>Los que cargues acá van a aparecer en esta lista.</p>
+              </div>
+            ) : registrosFiltrados.length === 0 ? (
+              <div className="empty-state">
+                <div className="display">Sin resultados</div>
+                <p>Ningún registro coincide con "{busqueda}".</p>
+              </div>
+            ) : (
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Fecha</th>
+                    <th>Guía</th>
+                    <th>Empresa</th>
+                    <th>Vehículo</th>
+                    <th>Pasajeros</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {registrosFiltrados.map((r) => (
+                    <tr key={r.id}>
+                      <td>{formatearFechaHora(r.fechaHoraIngreso)}</td>
+                      <td>{r.guiaNombre}</td>
+                      <td>{r.empresaNombre}</td>
+                      <td>{r.vehiculoTipoNombre} · {r.chapa}</td>
+                      <td>{r.cantPasajeros}</td>
+                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                        <button className="icon-btn" onClick={() => setRegistroParaEditar(r)} title="Editar">✎</button>
+                        <button className="icon-btn" onClick={() => anularRegistro(r)} title="Anular" style={{ color: "var(--alert)" }}>✕</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {registroParaEditar && (
+        <ModalEditarRegistroParisStore
+          registro={registroParaEditar}
+          empresas={empresas}
+          tiposVehiculo={tiposVehiculo}
+          onClose={() => setRegistroParaEditar(null)}
+          mostrarToast={mostrarToast}
+        />
+      )}
+    </div>
+  );
+}
+
+function FormularioParisStore({ guias, empresas, tiposVehiculo, perfil, mostrarToast }) {
+  const [nombreGuia, setNombreGuia] = useState("");
+  const [guiaSeleccionado, setGuiaSeleccionado] = useState(null);
+  const [mostrarSugerencias, setMostrarSugerencias] = useState(false);
+  const [empresaId, setEmpresaId] = useState("");
+  const [cantPasajeros, setCantPasajeros] = useState("");
+  const [vehiculoTipoId, setVehiculoTipoId] = useState("");
+  const [chapa, setChapa] = useState("");
+  const [ticket, setTicket] = useState("");
+  const [horaIngreso, setHoraIngreso] = useState(horaActualHHMM());
+  const [error, setError] = useState("");
+  const [cargando, setCargando] = useState(false);
+
+  const sugerencias =
+    nombreGuia.trim().length > 0
+      ? guias.filter((g) => g.nombre.toLowerCase().includes(nombreGuia.trim().toLowerCase())).slice(0, 6)
+      : [];
+
+  function elegirGuia(g) {
+    setGuiaSeleccionado(g);
+    setNombreGuia(g.nombre);
+    setMostrarSugerencias(false);
+  }
+
+  function cambiarNombreGuia(valor) {
+    setNombreGuia(valor.toUpperCase());
+    setGuiaSeleccionado(null);
+    setMostrarSugerencias(true);
+  }
+
+  function limpiarFormulario() {
+    setNombreGuia("");
+    setGuiaSeleccionado(null);
+    setEmpresaId("");
+    setCantPasajeros("");
+    setVehiculoTipoId("");
+    setChapa("");
+    setTicket("");
+    setHoraIngreso(horaActualHHMM());
+  }
+
+  async function registrar(e) {
+    e.preventDefault();
+    setError("");
+    if (!nombreGuia.trim() || !empresaId || !vehiculoTipoId || !chapa.trim() || !cantPasajeros) {
+      setError("Completá guía, empresa, pasajeros, tipo de vehículo y chapa.");
+      return;
+    }
+    setCargando(true);
+    try {
+      let guiaId = guiaSeleccionado ? guiaSeleccionado.id : null;
+      if (!guiaId) {
+        const nuevoGuia = await db.collection("guias").add({
+          nombre: nombreGuia.trim(),
+          creadoEn: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        guiaId = nuevoGuia.id;
+      }
+
+      const empresa = empresas.find((e) => e.id === empresaId);
+      const tipoVehiculo = tiposVehiculo.find((t) => t.id === vehiculoTipoId);
+
+      const [hh, mm] = horaIngreso.split(":").map(Number);
+      const fechaHoraIngreso = new Date();
+      fechaHoraIngreso.setHours(hh, mm, 0, 0);
+
+      await db.collection("registrosParisStore").add({
+        guiaId,
+        guiaNombre: nombreGuia.trim(),
+        empresaId,
+        empresaNombre: empresa ? empresa.nombre : "",
+        vehiculoTipoId,
+        vehiculoTipoNombre: tipoVehiculo ? tipoVehiculo.nombre : "",
+        chapa: chapa.trim().toUpperCase(),
+        cantPasajeros: Number(cantPasajeros),
+        ticketEstacionamiento: ticket.trim(),
+        fechaHoraIngreso: firebase.firestore.Timestamp.fromDate(fechaHoraIngreso),
+        usuarioIngresoId: perfil.id,
+        usuarioIngresoNombre: perfil.nombre
+      });
+
+      mostrarToast(`Registro cargado: ${nombreGuia.trim()}`);
+      limpiarFormulario();
+    } catch (err) {
+      console.error(err);
+      setError("No se pudo guardar el registro. Probá de nuevo.");
+    } finally {
+      setCargando(false);
+    }
+  }
+
+  return (
+    <div className="panel">
+      <div className="panel-header">
+        <h2>Nuevo registro</h2>
+      </div>
+      <div className="panel-body">
+        {error && <div className="form-error">{error}</div>}
+        <form onSubmit={registrar}>
+          <div className="field autocomplete">
+            <label>Guía</label>
+            <input
+              value={nombreGuia}
+              onChange={(e) => cambiarNombreGuia(e.target.value)}
+              onFocus={() => setMostrarSugerencias(true)}
+              onBlur={() => setTimeout(() => setMostrarSugerencias(false), 150)}
+              placeholder="Nombre y apellido"
+              autoComplete="off"
+              required
+            />
+            {mostrarSugerencias && nombreGuia.trim() && (
+              <div className="autocomplete-list">
+                {sugerencias.map((g) => (
+                  <div key={g.id} className="autocomplete-item" onMouseDown={() => elegirGuia(g)}>
+                    {g.nombre}
+                  </div>
+                ))}
+                {!sugerencias.some((g) => g.nombre.toLowerCase() === nombreGuia.trim().toLowerCase()) && (
+                  <div className="autocomplete-item crear-nuevo" onMouseDown={() => setMostrarSugerencias(false)}>
+                    + Crear guía nuevo: "{nombreGuia.trim()}"
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="field-row">
+            <div className="field">
+              <label>Empresa</label>
+              <select value={empresaId} onChange={(e) => setEmpresaId(e.target.value)} required>
+                <option value="">Seleccionar…</option>
+                {empresas.map((emp) => (
+                  <option key={emp.id} value={emp.id}>{emp.nombre}</option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label>Cantidad de pasajeros</label>
+              <input type="number" min="1" value={cantPasajeros} onChange={(e) => setCantPasajeros(e.target.value)} required />
+            </div>
+          </div>
+
+          <div className="field-row">
+            <div className="field">
+              <label>Tipo de vehículo</label>
+              <select value={vehiculoTipoId} onChange={(e) => setVehiculoTipoId(e.target.value)} required>
+                <option value="">Seleccionar…</option>
+                {tiposVehiculo.map((t) => (
+                  <option key={t.id} value={t.id}>{t.nombre}</option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label>Chapa</label>
+              <input value={chapa} onChange={(e) => setChapa(e.target.value.toUpperCase())} placeholder="AB 123 CD" required />
+            </div>
+          </div>
+
+          <div className="field-row">
+            <div className="field">
+              <label>Ticket de estacionamiento (opcional)</label>
+              <input value={ticket} onChange={(e) => setTicket(e.target.value.toUpperCase())} placeholder="Si corresponde" />
+            </div>
+            <div className="field">
+              <label>Hora de ingreso</label>
+              <input type="time" value={horaIngreso} onChange={(e) => setHoraIngreso(e.target.value)} required />
+            </div>
+          </div>
+
+          <button className="btn btn-primary" disabled={cargando} style={{ width: "auto", padding: "11px 24px" }}>
+            {cargando ? "Guardando..." : "Registrar"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function ModalEditarRegistroParisStore({ registro, empresas, tiposVehiculo, onClose, mostrarToast }) {
+  const [nombreGuia, setNombreGuia] = useState(registro.guiaNombre || "");
+  const [empresaId, setEmpresaId] = useState(registro.empresaId || "");
+  const [cantPasajeros, setCantPasajeros] = useState(registro.cantPasajeros || "");
+  const [vehiculoTipoId, setVehiculoTipoId] = useState(registro.vehiculoTipoId || "");
+  const [chapa, setChapa] = useState(registro.chapa || "");
+  const [ticket, setTicket] = useState(registro.ticketEstacionamiento || "");
+  const [cargando, setCargando] = useState(false);
+  const [error, setError] = useState("");
+
+  async function guardar(e) {
+    e.preventDefault();
+    if (!nombreGuia.trim() || !empresaId || !vehiculoTipoId || !chapa.trim() || !cantPasajeros) {
+      setError("Completá todos los campos obligatorios.");
+      return;
+    }
+    setError("");
+    setCargando(true);
+    try {
+      const empresa = empresas.find((e) => e.id === empresaId);
+      const tipoVehiculo = tiposVehiculo.find((t) => t.id === vehiculoTipoId);
+
+      await db.collection("registrosParisStore").doc(registro.id).update({
+        guiaNombre: nombreGuia.trim(),
+        empresaId,
+        empresaNombre: empresa ? empresa.nombre : "",
+        vehiculoTipoId,
+        vehiculoTipoNombre: tipoVehiculo ? tipoVehiculo.nombre : "",
+        chapa: chapa.trim().toUpperCase(),
+        cantPasajeros: Number(cantPasajeros),
+        ticketEstacionamiento: ticket.trim()
+      });
+      mostrarToast("Registro actualizado.");
+      onClose();
+    } catch (err) {
+      console.error(err);
+      setError("No se pudo guardar el cambio. Probá de nuevo.");
+    } finally {
+      setCargando(false);
+    }
+  }
+
+  return (
+    <Modal
+      titulo="Editar registro"
+      onClose={onClose}
+      footer={
+        <React.Fragment>
+          <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-gold" onClick={guardar} disabled={cargando}>
+            {cargando ? "Guardando..." : "Guardar cambios"}
+          </button>
+        </React.Fragment>
+      }
+    >
+      {error && <div className="form-error">{error}</div>}
+      <form onSubmit={guardar}>
+        <div className="field">
+          <label>Guía</label>
+          <input value={nombreGuia} onChange={(e) => setNombreGuia(e.target.value.toUpperCase())} required />
+        </div>
+        <div className="field-row">
+          <div className="field">
+            <label>Empresa</label>
+            <select value={empresaId} onChange={(e) => setEmpresaId(e.target.value)} required>
+              <option value="">Seleccionar…</option>
+              {empresas.map((emp) => (
+                <option key={emp.id} value={emp.id}>{emp.nombre}</option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label>Cantidad de pasajeros</label>
+            <input type="number" min="1" value={cantPasajeros} onChange={(e) => setCantPasajeros(e.target.value)} required />
+          </div>
+        </div>
+        <div className="field-row">
+          <div className="field">
+            <label>Tipo de vehículo</label>
+            <select value={vehiculoTipoId} onChange={(e) => setVehiculoTipoId(e.target.value)} required>
+              <option value="">Seleccionar…</option>
+              {tiposVehiculo.map((t) => (
+                <option key={t.id} value={t.id}>{t.nombre}</option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label>Chapa</label>
+            <input value={chapa} onChange={(e) => setChapa(e.target.value.toUpperCase())} required />
+          </div>
+        </div>
+        <div className="field">
+          <label>Ticket de estacionamiento (opcional)</label>
+          <input value={ticket} onChange={(e) => setTicket(e.target.value.toUpperCase())} />
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Vista genérica de catálogo simple (Empresas / Tipos de vehículo)
 // ---------------------------------------------------------------------------
 
@@ -3410,6 +3833,7 @@ function ConfiguracionView({ mostrarToast }) {
 const NAV_ITEMS = [
   { id: "panel", label: "Panel", icon: "◆", permiso: null },
   { id: "visitas", label: "Visitas", icon: "◈", permiso: "registrar_visitas" },
+  { id: "parisStore", label: "Paris Store", icon: "◈", permiso: "registrar_visitas" },
   { id: "guias", label: "Guías", icon: "◈", permiso: "registrar_visitas" },
   { id: "ranking", label: "Ranking", icon: "◈", permiso: "ver_reportes" },
   { id: "mapaCalor", label: "Mapa de calor", icon: "◈", permiso: "ver_reportes" },
@@ -3466,6 +3890,9 @@ function Shell({ perfil }) {
   function renderVista() {
     if (vista === "visitas" && tienePermiso(perfil, "registrar_visitas")) {
       return <VisitasView perfil={perfil} mostrarToast={mostrarToast} />;
+    }
+    if (vista === "parisStore" && tienePermiso(perfil, "registrar_visitas")) {
+      return <ParisStoreView perfil={perfil} mostrarToast={mostrarToast} />;
     }
     if (vista === "reportes" && tienePermiso(perfil, "ver_reportes")) {
       return <ReportesView />;
@@ -3563,7 +3990,7 @@ function Shell({ perfil }) {
             {sidebarColapsado ? "⏻" : "Cerrar sesión"}
           </button>
           {!sidebarColapsado && (
-            <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.12</div>
+            <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.13</div>
           )}
         </div>
       </aside>

@@ -2,6 +2,14 @@
 
 Versionado simplificado `vMAJOR.MINOR`. MAJOR = cambios de arquitectura o que rompen datos existentes. MINOR = funcionalidad nueva incremental.
 
+## v1.13 — 2026-09-02
+
+Nuevo módulo Paris Store + corrección de permisos.
+
+- **Módulo Paris Store**: nuevo ítem en el menú lateral (mismo permiso `registrar_visitas`), para un punto de atención distinto a la sala de guías. Formulario de carga básica (guía con autocompletado, empresa, pasajeros, tipo de vehículo, chapa, ticket de estacionamiento opcional, hora de ingreso editable) — **sin** monto acumulado, **sin** liberación de estacionamiento y **sin** impresión de ningún comprobante.
+- Colección propia en Firestore (`registrosParisStore`), separada de `visitas`, con su lista de "Registros recientes" (buscador por nombre de guía, editar y anular).
+- **Corrección de permisos**: la regla de `firestore.rules` para anular una visita exigía el permiso `gestionar_usuarios`, pero el botón "✕ Anular visita" de la interfaz es visible para cualquiera con `registrar_visitas` (Encargado de Sala) — quedaba un botón que fallaba silenciosamente. Ahora la regla acepta ambos permisos, igual que en Paris Store.
+
 ## v1.12 — 2026-08-26
 
 Desglose por tipo de vehículo en los reportes.
