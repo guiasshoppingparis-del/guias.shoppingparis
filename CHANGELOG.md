@@ -2,6 +2,15 @@
 
 Versionado simplificado `vMAJOR.MINOR`. MAJOR = cambios de arquitectura o que rompen datos existentes. MINOR = funcionalidad nueva incremental.
 
+## v1.16 — 2026-09-02
+
+Reportes de Tienda (sección separada de Reportes).
+
+- Nuevo ítem **"Reportes Tienda"** en el menú (mismo permiso `ver_reportes` que Reportes), con su propio filtro de fecha y un selector de **tienda** ("Todas" o una en particular).
+- Tarjetas: Personas ingresadas, Vehículos ingresados, **Con salida registrada** y **Salida pendiente** (en vez de Liberados/No liberados, que son conceptos de Visitas/estacionamiento y no aplican acá).
+- Mismo esquema que Reportes: cada tarjeta se despliega con el detalle (incluyendo columna "Tienda" cuando corresponde) y tiene su botón de descarga en PDF.
+- No se mezcla con los datos de Reportes (Sala de Guías) — son secciones completamente separadas, como se definió.
+
 ## v1.15 — 2026-09-02
 
 Hora de salida en el módulo Tienda.

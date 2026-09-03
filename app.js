@@ -268,7 +268,7 @@ function PanelInicio({ perfil }) {
       </div>
 
       <div className="ticket">
-        <div className="ticket-stub">v1.15</div>
+        <div className="ticket-stub">v1.16</div>
         <div className="ticket-perforation"></div>
         <div className="ticket-body">
           <h2 style={{ fontSize: 16, marginBottom: 6 }}>Versión estable</h2>
@@ -3402,6 +3402,442 @@ function ReportesView() {
 }
 
 // ---------------------------------------------------------------------------
+// Vista: Reportes de Tienda
+// ---------------------------------------------------------------------------
+
+function agruparPersonasPorGuiaTienda(registros) {
+  const mapa = new Map();
+  for (const r of registros) {
+    const key = `${r.guiaNombre || "(sin nombre)"}|${r.tiendaNombre || ""}`;
+    if (!mapa.has(key)) {
+      mapa.set(key, {
+        guia: r.guiaNombre || "(sin nombre)",
+        tienda: r.tiendaNombre || "",
+        empresa: r.empresaNombre || "",
+        visitas: 0,
+        pasajeros: 0
+      });
+    }
+    const item = mapa.get(key);
+    item.visitas += 1;
+    item.pasajeros += Number(r.cantPasajeros) || 0;
+  }
+  return Array.from(mapa.values()).sort((a, b) => b.pasajeros - a.pasajeros);
+}
+
+const REPORTES_TIENDA_DETALLE_CONFIG = {
+  personas: {
+    titulo: "Personas ingresadas por guía",
+    columnas: ["Guía", "Tienda", "Empresa", "Visitas", "Pasajeros"],
+    datos: (regs) => agruparPersonasPorGuiaTienda(regs),
+    filas: (datos) => datos.map((r) => [r.guia, r.tienda, r.empresa, r.visitas, r.pasajeros]),
+    totales: (datos) => [
+      { label: "Total de Guías", valor: contarUnicos(datos, "guia") },
+      { label: "Total de Tiendas", valor: contarUnicos(datos, "tienda") },
+      { label: "Total de Visitas", valor: datos.reduce((acc, r) => acc + r.visitas, 0) },
+      { label: "Total de Pasajeros", valor: datos.reduce((acc, r) => acc + r.pasajeros, 0) }
+    ]
+  },
+  vehiculos: {
+    titulo: "Vehículos ingresados",
+    columnas: ["Fecha ingreso", "Tienda", "Guía", "Empresa", "Vehículo", "Chapa", "Pasajeros", "Ticket", "Salida"],
+    datos: (regs) => regs,
+    filas: (datos) => datos.map((r) => [
+      formatearFechaHora(r.fechaHoraIngreso),
+      r.tiendaNombre,
+      r.guiaNombre,
+      r.empresaNombre,
+      r.vehiculoTipoNombre,
+      r.chapa,
+      r.cantPasajeros,
+      r.ticketEstacionamiento || "—",
+      r.fechaHoraSalida ? formatearFechaHora(r.fechaHoraSalida) : "Pendiente"
+    ]),
+    totales: (datos) => [
+      { label: "Total de Guías", valor: contarUnicos(datos, "guiaNombre") },
+      { label: "Total de Tiendas", valor: contarUnicos(datos, "tiendaNombre") },
+      { label: "Total de Empresas", valor: contarUnicos(datos, "empresaNombre") },
+      { label: "Total de Vehículos", valor: datos.length }
+    ],
+    desglose: (datos) => ({ titulo: "Por tipo de vehículo", filas: contarPorCampo(datos, "vehiculoTipoNombre") })
+  },
+  conSalida: {
+    titulo: "Con salida registrada",
+    columnas: ["Fecha ingreso", "Tienda", "Guía", "Empresa", "Vehículo", "Pasajeros", "Salida"],
+    datos: (regs) => regs.filter((r) => r.fechaHoraSalida),
+    filas: (datos) => datos.map((r) => [
+      formatearFechaHora(r.fechaHoraIngreso),
+      r.tiendaNombre,
+      r.guiaNombre,
+      r.empresaNombre,
+      `${r.vehiculoTipoNombre} · ${r.chapa}`,
+      r.cantPasajeros,
+      formatearFechaHora(r.fechaHoraSalida)
+    ]),
+    totales: (datos) => [
+      { label: "Total de Guías", valor: contarUnicos(datos, "guiaNombre") },
+      { label: "Total de Tiendas", valor: contarUnicos(datos, "tiendaNombre") },
+      { label: "Total de Vehículos", valor: datos.length }
+    ]
+  },
+  sinSalida: {
+    titulo: "Salida pendiente",
+    columnas: ["Fecha ingreso", "Tienda", "Guía", "Empresa", "Vehículo", "Pasajeros"],
+    datos: (regs) => regs.filter((r) => !r.fechaHoraSalida),
+    filas: (datos) => datos.map((r) => [
+      formatearFechaHora(r.fechaHoraIngreso),
+      r.tiendaNombre,
+      r.guiaNombre,
+      r.empresaNombre,
+      `${r.vehiculoTipoNombre} · ${r.chapa}`,
+      r.cantPasajeros
+    ]),
+    totales: (datos) => [
+      { label: "Total de Guías", valor: contarUnicos(datos, "guiaNombre") },
+      { label: "Total de Tiendas", valor: contarUnicos(datos, "tiendaNombre") },
+      { label: "Total de Vehículos", valor: datos.length }
+    ]
+  }
+};
+
+function ModalReporteTiendaDetalle({ tipo, registros, desde, hasta, onClose }) {
+  const config = REPORTES_TIENDA_DETALLE_CONFIG[tipo];
+  const datos = config.datos(registros);
+  const filas = config.filas(datos);
+  const totales = config.totales ? config.totales(datos) : [];
+  const desglose = config.desglose ? config.desglose(datos) : null;
+
+  function descargarPDF() {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(14);
+    doc.text("SHOPPING PARIS", 14, 15);
+    doc.setFontSize(11);
+    doc.text(config.titulo, 14, 22);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.text(`Período: ${desde} a ${hasta} — ${filas.length} ${filas.length === 1 ? "registro" : "registros"}`, 14, 28);
+    doc.autoTable({
+      startY: 33,
+      head: [config.columnas],
+      body: filas,
+      styles: { fontSize: 8, cellPadding: 2.5 },
+      headStyles: { fillColor: [31, 78, 120], textColor: 255 },
+      alternateRowStyles: { fillColor: [245, 243, 237] }
+    });
+
+    let y = doc.lastAutoTable.finalY + 10;
+    const alturaPagina = doc.internal.pageSize.getHeight();
+
+    if (totales.length > 0) {
+      if (y > alturaPagina - 20) {
+        doc.addPage();
+        y = 20;
+      }
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.text("Totales", 14, y);
+      y += 6;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      for (const t of totales) {
+        doc.text(`${t.label}: ${t.valor}`, 14, y);
+        y += 6;
+      }
+    }
+
+    if (desglose && desglose.filas.length > 0) {
+      y += 4;
+      if (y > alturaPagina - 20) {
+        doc.addPage();
+        y = 20;
+      }
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.text(desglose.titulo, 14, y);
+      y += 6;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      for (const d of desglose.filas) {
+        doc.text(`${d.valor}: ${d.cantidad}`, 14, y);
+        y += 6;
+      }
+    }
+
+    doc.save(`reporte-tienda-${tipo}-${desde}-a-${hasta}.pdf`);
+  }
+
+  return (
+    <Modal titulo={config.titulo} onClose={onClose} ancho="1100px">
+      <p style={{ fontSize: 13, color: "var(--text-muted)", marginTop: -4, marginBottom: 14 }}>
+        Período: {desde} a {hasta} — {filas.length} {filas.length === 1 ? "registro" : "registros"}
+      </p>
+      <div style={{ maxHeight: "55vh", overflow: "auto", marginBottom: 14, border: "1px solid var(--line)", borderRadius: 8 }}>
+        <table className="data-table" style={{ minWidth: "max-content" }}>
+          <thead>
+            <tr>
+              {config.columnas.map((c) => <th key={c} style={{ whiteSpace: "nowrap" }}>{c}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {filas.length === 0 ? (
+              <tr>
+                <td colSpan={config.columnas.length} style={{ textAlign: "center", color: "var(--text-muted)", padding: 20 }}>
+                  Sin registros en este período.
+                </td>
+              </tr>
+            ) : (
+              filas.map((fila, i) => (
+                <tr key={i}>
+                  {fila.map((celda, j) => <td key={j} style={{ whiteSpace: "nowrap" }}>{celda}</td>)}
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {totales.length > 0 && (
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 10,
+            marginBottom: 18,
+            padding: "12px 14px",
+            background: "var(--paper)",
+            borderRadius: 8
+          }}
+        >
+          {totales.map((t) => (
+            <div key={t.label} style={{ minWidth: 140 }}>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.03em" }}>
+                {t.label}
+              </div>
+              <div style={{ fontSize: 18, fontWeight: 700 }}>{t.valor}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {desglose && desglose.filas.length > 0 && (
+        <div style={{ marginBottom: 18 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>{desglose.titulo}</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {desglose.filas.map((d) => (
+              <div
+                key={d.valor}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "6px 12px",
+                  background: "var(--paper)",
+                  borderRadius: 20,
+                  fontSize: 13
+                }}
+              >
+                <span>{d.valor}</span>
+                <span className="badge badge-gold">{d.cantidad}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <button className="btn btn-primary" style={{ width: "100%" }} onClick={descargarPDF} disabled={filas.length === 0}>
+        Descargar PDF
+      </button>
+    </Modal>
+  );
+}
+
+function ReportesTiendaView() {
+  const hoy = new Date();
+  const [desde, setDesde] = useState(fechaISO(hoy));
+  const [hasta, setHasta] = useState(fechaISO(hoy));
+  const [tiendaFiltro, setTiendaFiltro] = useState("todas");
+  const [tiendas, setTiendas] = useState([]);
+  const [registros, setRegistros] = useState([]);
+  const [cargando, setCargando] = useState(false);
+  const [error, setError] = useState("");
+  const [consultado, setConsultado] = useState(false);
+  const [reporteAbierto, setReporteAbierto] = useState(null);
+
+  useEffect(() => {
+    const unsub = db.collection("tiendas").orderBy("nombre").onSnapshot((s) =>
+      setTiendas(s.docs.map((d) => ({ id: d.id, ...d.data() })))
+    );
+    return () => unsub();
+  }, []);
+
+  async function consultar(e) {
+    if (e) e.preventDefault();
+    setCargando(true);
+    setError("");
+    try {
+      const inicio = firebase.firestore.Timestamp.fromDate(new Date(desde + "T00:00:00"));
+      const fin = firebase.firestore.Timestamp.fromDate(new Date(hasta + "T23:59:59"));
+      const snap = await db
+        .collection("registrosTienda")
+        .where("fechaHoraIngreso", ">=", inicio)
+        .where("fechaHoraIngreso", "<=", fin)
+        .orderBy("fechaHoraIngreso", "desc")
+        .get();
+      let datos = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      if (tiendaFiltro !== "todas") {
+        datos = datos.filter((r) => r.tiendaId === tiendaFiltro);
+      }
+      setRegistros(datos);
+      setConsultado(true);
+    } catch (err) {
+      console.error(err);
+      setError("No se pudo generar el reporte. Probá de nuevo.");
+    } finally {
+      setCargando(false);
+    }
+  }
+
+  useEffect(() => {
+    consultar();
+  }, []);
+
+  function aplicarPreset(preset) {
+    const d = new Date();
+    if (preset === "hoy") {
+      setDesde(fechaISO(d));
+      setHasta(fechaISO(d));
+    } else if (preset === "semana") {
+      const inicioSemana = new Date(d);
+      inicioSemana.setDate(d.getDate() - d.getDay());
+      setDesde(fechaISO(inicioSemana));
+      setHasta(fechaISO(d));
+    } else if (preset === "mes") {
+      const inicioMes = new Date(d.getFullYear(), d.getMonth(), 1);
+      setDesde(fechaISO(inicioMes));
+      setHasta(fechaISO(d));
+    }
+  }
+
+  const totalPersonas = registros.reduce((acc, r) => acc + (Number(r.cantPasajeros) || 0), 0);
+  const totalVehiculos = registros.length;
+  const conSalida = registros.filter((r) => r.fechaHoraSalida).length;
+  const sinSalida = registros.filter((r) => !r.fechaHoraSalida).length;
+
+  return (
+    <div>
+      <div className="page-header">
+        <div>
+          <div className="page-eyebrow">Reportes</div>
+          <h1>Actividad de Tienda por período</h1>
+          <p className="page-desc">Consultá personas y vehículos ingresados desde los puntos de Tienda, aparte de la Sala de Guías.</p>
+        </div>
+      </div>
+
+      <div className="panel" style={{ marginBottom: 24 }}>
+        <div className="panel-body">
+          <form onSubmit={consultar} style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+            <div className="field" style={{ marginBottom: 0 }}>
+              <label>Desde</label>
+              <input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} required />
+            </div>
+            <div className="field" style={{ marginBottom: 0 }}>
+              <label>Hasta</label>
+              <input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} required />
+            </div>
+            <div className="field" style={{ marginBottom: 0 }}>
+              <label>Tienda</label>
+              <select value={tiendaFiltro} onChange={(e) => setTiendaFiltro(e.target.value)}>
+                <option value="todas">Todas</option>
+                {tiendas.map((t) => (
+                  <option key={t.id} value={t.id}>{t.nombre}</option>
+                ))}
+              </select>
+            </div>
+            <button className="btn btn-gold" disabled={cargando} style={{ width: "auto", padding: "11px 20px" }}>
+              {cargando ? "Consultando..." : "Consultar"}
+            </button>
+            <div style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
+              <button type="button" className="btn btn-ghost" onClick={() => aplicarPreset("hoy")}>Hoy</button>
+              <button type="button" className="btn btn-ghost" onClick={() => aplicarPreset("semana")}>Esta semana</button>
+              <button type="button" className="btn btn-ghost" onClick={() => aplicarPreset("mes")}>Este mes</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      {error && <div className="form-error">{error}</div>}
+
+      {consultado && (
+        <React.Fragment>
+          <div className="stat-grid">
+            <div
+              className="stat-card"
+              role="button"
+              tabIndex={0}
+              style={{ cursor: "pointer" }}
+              onClick={() => setReporteAbierto("personas")}
+              title="Ver detalle por guía"
+            >
+              <div className="stat-label">Personas ingresadas</div>
+              <div className="stat-value">{totalPersonas}</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>Ver detalle →</div>
+            </div>
+            <div
+              className="stat-card"
+              role="button"
+              tabIndex={0}
+              style={{ cursor: "pointer" }}
+              onClick={() => setReporteAbierto("vehiculos")}
+              title="Ver detalle de vehículos ingresados"
+            >
+              <div className="stat-label">Vehículos ingresados</div>
+              <div className="stat-value">{totalVehiculos}</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>Ver detalle →</div>
+            </div>
+            <div
+              className="stat-card"
+              role="button"
+              tabIndex={0}
+              style={{ cursor: "pointer" }}
+              onClick={() => setReporteAbierto("conSalida")}
+              title="Ver detalle de los que ya tienen salida registrada"
+            >
+              <div className="stat-label">Con salida registrada</div>
+              <div className="stat-value" style={{ color: "var(--success)" }}>{conSalida}</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>Ver detalle →</div>
+            </div>
+            <div
+              className="stat-card"
+              role="button"
+              tabIndex={0}
+              style={{ cursor: "pointer" }}
+              onClick={() => setReporteAbierto("sinSalida")}
+              title="Ver detalle de los que todavía no tienen salida"
+            >
+              <div className="stat-label">Salida pendiente</div>
+              <div className="stat-value" style={{ color: "var(--alert)" }}>{sinSalida}</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>Ver detalle →</div>
+            </div>
+          </div>
+
+          {reporteAbierto && (
+            <ModalReporteTiendaDetalle
+              tipo={reporteAbierto}
+              registros={registros}
+              desde={desde}
+              hasta={hasta}
+              onClose={() => setReporteAbierto(null)}
+            />
+          )}
+        </React.Fragment>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Vista: Ranking de guías y fidelidad
 // ---------------------------------------------------------------------------
 
@@ -4058,6 +4494,7 @@ const NAV_ITEMS = [
   { id: "ranking", label: "Ranking", icon: "◈", permiso: "ver_reportes" },
   { id: "mapaCalor", label: "Mapa de calor", icon: "◈", permiso: "ver_reportes" },
   { id: "reportes", label: "Reportes", icon: "◈", permiso: "ver_reportes" },
+  { id: "reportesTienda", label: "Reportes Tienda", icon: "◈", permiso: "ver_reportes" },
   { id: "usuarios", label: "Usuarios y roles", icon: "◈", permiso: "gestionar_usuarios" },
   { id: "empresas", label: "Empresas", icon: "◇", permiso: "gestionar_catalogos" },
   { id: "vehiculos", label: "Tipos de vehículo", icon: "◇", permiso: "gestionar_catalogos" },
@@ -4126,6 +4563,9 @@ function Shell({ perfil }) {
     }
     if (vista === "reportes" && tienePermiso(perfil, "ver_reportes")) {
       return <ReportesView />;
+    }
+    if (vista === "reportesTienda" && tienePermiso(perfil, "ver_reportes")) {
+      return <ReportesTiendaView />;
     }
     if (vista === "guias" && tienePermiso(perfil, "registrar_visitas")) {
       return <GuiasView mostrarToast={mostrarToast} />;
@@ -4231,7 +4671,7 @@ function Shell({ perfil }) {
             {sidebarColapsado ? "⏻" : "Cerrar sesión"}
           </button>
           {!sidebarColapsado && (
-            <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.15</div>
+            <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.16</div>
           )}
         </div>
       </aside>
