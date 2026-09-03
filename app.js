@@ -268,7 +268,7 @@ function PanelInicio({ perfil }) {
       </div>
 
       <div className="ticket">
-        <div className="ticket-stub">v1.16</div>
+        <div className="ticket-stub">v1.17</div>
         <div className="ticket-perforation"></div>
         <div className="ticket-body">
           <h2 style={{ fontSize: 16, marginBottom: 6 }}>Versión estable</h2>
@@ -697,6 +697,7 @@ function VisitasView({ perfil, mostrarToast }) {
   const [visitasEnCurso, setVisitasEnCurso] = useState([]);
   const [visitaSeleccionada, setVisitaSeleccionada] = useState(null);
   const [visitaParaPermiso, setVisitaParaPermiso] = useState(null);
+  const [visitaParaReingreso, setVisitaParaReingreso] = useState(null);
   const [modoPartner, setModoPartner] = useState(false);
   const [busquedaGuia, setBusquedaGuia] = useState("");
   const [mostrarCierreDia, setMostrarCierreDia] = useState(false);
@@ -780,24 +781,6 @@ function VisitasView({ perfil, mostrarToast }) {
     } catch (err) {
       console.error(err);
       mostrarToast("No se pudo anular la visita.");
-    }
-  }
-
-  // Otorgar el permiso ahora pasa por un modal (motivo + autorizante) antes de
-  // tocar Firestore y generar el PDF; acá solo queda la revocación directa.
-  async function revocarPermisoSalida(v) {
-    try {
-      await db.collection("visitas").doc(v.id).update({
-        permisoSalida: false,
-        permisoSalidaPor: firebase.firestore.FieldValue.delete(),
-        permisoSalidaFecha: firebase.firestore.FieldValue.delete(),
-        motivosSalida: firebase.firestore.FieldValue.delete(),
-        autorizadoPorLocal: firebase.firestore.FieldValue.delete()
-      });
-      mostrarToast("Permiso de salida retirado.");
-    } catch (err) {
-      console.error(err);
-      mostrarToast("No se pudo actualizar el permiso de salida.");
     }
   }
 
@@ -909,9 +892,9 @@ function VisitasView({ perfil, mostrarToast }) {
                       <button
                         className="btn btn-ghost"
                         style={{ width: "100%", marginTop: 12 }}
-                        onClick={() => (v.permisoSalida ? revocarPermisoSalida(v) : setVisitaParaPermiso(v))}
+                        onClick={() => (v.permisoSalida ? setVisitaParaReingreso(v) : setVisitaParaPermiso(v))}
                       >
-                        {v.permisoSalida ? "Quitar permiso de salida" : "Otorgar permiso de salida"}
+                        {v.permisoSalida ? "Registrar reingreso (quitar permiso)" : "Otorgar permiso de salida"}
                       </button>
                     )}
 
@@ -980,6 +963,14 @@ function VisitasView({ perfil, mostrarToast }) {
           visita={visitaParaPermiso}
           perfil={perfil}
           onClose={() => setVisitaParaPermiso(null)}
+          mostrarToast={mostrarToast}
+        />
+      )}
+
+      {visitaParaReingreso && (
+        <ModalReingresoVisita
+          visita={visitaParaReingreso}
+          onClose={() => setVisitaParaReingreso(null)}
           mostrarToast={mostrarToast}
         />
       )}
@@ -1458,6 +1449,79 @@ function ModalPermisoSalida({ visita, perfil, onClose, mostrarToast }) {
       >
         {cargando ? "Procesando..." : yaOtorgado ? "Reintentar impresión" : "Otorgar permiso e imprimir"}
       </button>
+    </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Reingreso tras un permiso de salida: la máquina del estacionamiento le
+// entrega al guía un ticket nuevo al volver a entrar, así que hay que
+// actualizarlo en la visita antes de quitar la marca de permiso de salida.
+// ---------------------------------------------------------------------------
+
+function ModalReingresoVisita({ visita, onClose, mostrarToast }) {
+  const [nuevoTicket, setNuevoTicket] = useState("");
+  const [cargando, setCargando] = useState(false);
+  const [error, setError] = useState("");
+
+  async function confirmar(e) {
+    e.preventDefault();
+    if (!nuevoTicket.trim()) {
+      setError("Ingresá el número de ticket que le dieron al guía al volver a entrar.");
+      return;
+    }
+    setError("");
+    setCargando(true);
+    try {
+      await db.collection("visitas").doc(visita.id).update({
+        ticketEstacionamiento: nuevoTicket.trim().toUpperCase(),
+        permisoSalida: false,
+        permisoSalidaPor: firebase.firestore.FieldValue.delete(),
+        permisoSalidaFecha: firebase.firestore.FieldValue.delete(),
+        motivosSalida: firebase.firestore.FieldValue.delete(),
+        autorizadoPorLocal: firebase.firestore.FieldValue.delete()
+      });
+      mostrarToast("Reingreso registrado con el nuevo ticket.");
+      onClose();
+    } catch (err) {
+      console.error(err);
+      setError("No se pudo registrar el reingreso. Probá de nuevo.");
+    } finally {
+      setCargando(false);
+    }
+  }
+
+  return (
+    <Modal
+      titulo={`Reingreso — ${visita.guiaNombre}`}
+      onClose={onClose}
+      footer={
+        <React.Fragment>
+          <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-gold" onClick={confirmar} disabled={cargando}>
+            {cargando ? "Guardando..." : "Confirmar reingreso"}
+          </button>
+        </React.Fragment>
+      }
+    >
+      {error && <div className="form-error">{error}</div>}
+      <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 16 }}>
+        El guía salió con permiso y volvió a entrar con un ticket de estacionamiento
+        nuevo. Cargá ese número para reemplazar el anterior
+        (<strong>{visita.ticketEstacionamiento}</strong>) en esta visita.
+      </p>
+      <form onSubmit={confirmar}>
+        <div className="field">
+          <label>Nuevo N° de ticket de estacionamiento</label>
+          <input
+            value={nuevoTicket}
+            onChange={(e) => setNuevoTicket(e.target.value.toUpperCase())}
+            placeholder="Número impreso en el ticket"
+            autoFocus
+            required
+          />
+        </div>
+      </form>
     </Modal>
   );
 }
@@ -4671,7 +4735,7 @@ function Shell({ perfil }) {
             {sidebarColapsado ? "⏻" : "Cerrar sesión"}
           </button>
           {!sidebarColapsado && (
-            <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.16</div>
+            <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.17</div>
           )}
         </div>
       </aside>

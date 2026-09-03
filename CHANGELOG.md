@@ -2,6 +2,13 @@
 
 Versionado simplificado `vMAJOR.MINOR`. MAJOR = cambios de arquitectura o que rompen datos existentes. MINOR = funcionalidad nueva incremental.
 
+## v1.17 — 2026-09-02
+
+Renovación de ticket al reingresar (Visitas).
+
+- En el módulo Visitas (Sala de Guías), "Quitar permiso de salida" pasó a llamarse **"Registrar reingreso (quitar permiso)"**: en vez de revocar el permiso directo, abre una ventana que pide el **nuevo número de ticket de estacionamiento** (el que la máquina le entrega al guía al volver a entrar).
+- Al confirmar, se actualiza el ticket de la visita con el valor nuevo y recién ahí se quita la marca de "permiso de salida otorgado" — así el ticket que queda en el sistema, en los reportes y en el comprobante final de liberación es siempre el correcto.
+
 ## v1.16 — 2026-09-02
 
 Reportes de Tienda (sección separada de Reportes).
