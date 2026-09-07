@@ -2,6 +2,12 @@
 
 Versionado simplificado `vMAJOR.MINOR`. MAJOR = cambios de arquitectura o que rompen datos existentes. MINOR = funcionalidad nueva incremental.
 
+## v1.18 — 2026-09-07
+
+Total de Pasajeros en el reporte de Vehículos ingresados.
+
+- El detalle "Vehículos ingresados" de Reportes (Sala de Guías) suma "Total de Pasajeros" a los totales, junto a Guías, Empresas, Vehículos, Tickets y Monto acumulado. Se ve tanto en pantalla como en el PDF descargable.
+
 ## v1.17 — 2026-09-02
 
 Renovación de ticket al reingresar (Visitas).

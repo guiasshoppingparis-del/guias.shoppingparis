@@ -268,7 +268,7 @@ function PanelInicio({ perfil }) {
       </div>
 
       <div className="ticket">
-        <div className="ticket-stub">v1.17</div>
+        <div className="ticket-stub">v1.18</div>
         <div className="ticket-perforation"></div>
         <div className="ticket-body">
           <h2 style={{ fontSize: 16, marginBottom: 6 }}>Versión estable</h2>
@@ -3050,6 +3050,7 @@ const REPORTES_DETALLE_CONFIG = {
       { label: "Total de Empresas", valor: contarUnicos(datos, "empresaNombre") },
       { label: "Total de Vehículos", valor: datos.length },
       { label: "Total de Tickets", valor: contarUnicos(datos, "ticketEstacionamiento") },
+      { label: "Total de Pasajeros", valor: datos.reduce((acc, v) => acc + (Number(v.cantPasajeros) || 0), 0) },
       { label: "Total de Monto acumulado", valor: `$ ${datos.reduce((acc, v) => acc + (Number(v.montoAcumulado) || 0), 0).toLocaleString("es-AR")}` }
     ],
     desglose: (datos) => ({ titulo: "Por tipo de vehículo", filas: contarPorCampo(datos, "vehiculoTipoNombre") })
@@ -4735,7 +4736,7 @@ function Shell({ perfil }) {
             {sidebarColapsado ? "⏻" : "Cerrar sesión"}
           </button>
           {!sidebarColapsado && (
-            <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.17</div>
+            <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.18</div>
           )}
         </div>
       </aside>
