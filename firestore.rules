@@ -65,6 +65,13 @@ service cloud.firestore {
       allow write: if estaLogueado()
         && (tienePermiso('registrar_visitas') || tienePermiso('liberar_estacionamiento'));
     }
+    // Registro histórico de permisos de salida otorgados, para el informe de
+    // Reportes. No se borra al reingresar el guía: solo cambia de estado.
+    match /permisosSalidaLog/{logId} {
+      allow read: if estaLogueado();
+      allow create: if estaLogueado() && tienePermiso('registrar_visitas');
+      allow update: if estaLogueado() && tienePermiso('registrar_visitas');
+    }
     match /tiendas/{tiendaId} {
       allow read: if estaLogueado();
       allow write: if estaLogueado() && tienePermiso('gestionar_catalogos');

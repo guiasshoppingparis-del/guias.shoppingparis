@@ -268,7 +268,7 @@ function PanelInicio({ perfil }) {
       </div>
 
       <div className="ticket">
-        <div className="ticket-stub">v1.18</div>
+        <div className="ticket-stub">v1.19</div>
         <div className="ticket-perforation"></div>
         <div className="ticket-body">
           <h2 style={{ fontSize: 16, marginBottom: 6 }}>Versión estable</h2>
@@ -1353,6 +1353,12 @@ function ModalPermisoSalida({ visita, perfil, onClose, mostrarToast }) {
     setCargando(true);
     let numero;
     try {
+      // El log histórico se crea con id conocido de antemano, así se puede
+      // referenciar desde la visita (permisoSalidaLogId) sin una consulta
+      // extra — y al reingresar se actualiza este mismo documento en vez de
+      // borrarlo, para que el informe de "Permisos otorgados" conserve el
+      // historial completo aunque la visita ya haya resuelto su permiso.
+      const logRef = db.collection("permisosSalidaLog").doc();
       numero = await asignarNumeroSecuencial(
         "permisosSalida",
         db.collection("visitas").doc(visita.id),
@@ -1362,9 +1368,27 @@ function ModalPermisoSalida({ visita, perfil, onClose, mostrarToast }) {
           permisoSalidaPor: perfil.nombre,
           permisoSalidaFecha: firebase.firestore.FieldValue.serverTimestamp(),
           motivosSalida: motivosFinal,
-          autorizadoPorLocal: autorizadoPorLocal.trim()
+          autorizadoPorLocal: autorizadoPorLocal.trim(),
+          permisoSalidaLogId: logRef.id
         }
       );
+      await logRef.set({
+        visitaId: visita.id,
+        numeroPermiso: numero,
+        guiaNombre: visita.guiaNombre,
+        empresaNombre: visita.empresaNombre,
+        vehiculoTipoNombre: visita.vehiculoTipoNombre,
+        chapa: visita.chapa,
+        ticketOriginal: visita.ticketEstacionamiento,
+        motivosSalida: motivosFinal,
+        autorizadoPorLocal: autorizadoPorLocal.trim(),
+        otorgadoPorId: perfil.id,
+        otorgadoPorNombre: perfil.nombre,
+        fechaOtorgado: firebase.firestore.FieldValue.serverTimestamp(),
+        estado: "vigente",
+        ticketNuevo: null,
+        fechaReingreso: null
+      });
       setMotivosGuardados(motivosFinal);
       setAutorizanteGuardado(autorizadoPorLocal.trim());
       setNumeroPermiso(numero);
@@ -1473,14 +1497,25 @@ function ModalReingresoVisita({ visita, onClose, mostrarToast }) {
     setError("");
     setCargando(true);
     try {
+      const nuevoTicketNormalizado = nuevoTicket.trim().toUpperCase();
       await db.collection("visitas").doc(visita.id).update({
-        ticketEstacionamiento: nuevoTicket.trim().toUpperCase(),
+        ticketEstacionamiento: nuevoTicketNormalizado,
         permisoSalida: false,
         permisoSalidaPor: firebase.firestore.FieldValue.delete(),
         permisoSalidaFecha: firebase.firestore.FieldValue.delete(),
         motivosSalida: firebase.firestore.FieldValue.delete(),
-        autorizadoPorLocal: firebase.firestore.FieldValue.delete()
+        autorizadoPorLocal: firebase.firestore.FieldValue.delete(),
+        permisoSalidaLogId: firebase.firestore.FieldValue.delete()
       });
+      // Se resuelve el log histórico (no se borra) para que el informe de
+      // "Permisos otorgados" en Reportes conserve este permiso ya cerrado.
+      if (visita.permisoSalidaLogId) {
+        await db.collection("permisosSalidaLog").doc(visita.permisoSalidaLogId).update({
+          estado: "resuelto",
+          ticketNuevo: nuevoTicketNormalizado,
+          fechaReingreso: firebase.firestore.FieldValue.serverTimestamp()
+        });
+      }
       mostrarToast("Reingreso registrado con el nuevo ticket.");
       onClose();
     } catch (err) {
@@ -3255,11 +3290,141 @@ function ModalReporteDetalle({ tipo, visitas, desde, hasta, onClose }) {
   );
 }
 
+function ModalPermisosOtorgadosDetalle({ permisos, desde, hasta, onClose }) {
+  const columnas = ["Otorgado", "N° Permiso", "Guía", "Empresa", "Vehículo", "Motivo(s)", "Autorizado por local", "Otorgado por", "Estado", "Ticket nuevo", "Reingreso"];
+  const filas = permisos.map((p) => [
+    formatearFechaHora(p.fechaOtorgado),
+    p.numeroPermiso ? formatearNumeroSecuencial(p.numeroPermiso) : "—",
+    p.guiaNombre,
+    p.empresaNombre,
+    `${p.vehiculoTipoNombre || ""} · ${p.chapa || ""}`,
+    (p.motivosSalida || []).join(" / "),
+    p.autorizadoPorLocal,
+    p.otorgadoPorNombre,
+    p.estado === "resuelto" ? "Resuelto" : "Vigente",
+    p.ticketNuevo || "—",
+    p.fechaReingreso ? formatearFechaHora(p.fechaReingreso) : "—"
+  ]);
+  const vigentes = permisos.filter((p) => p.estado !== "resuelto").length;
+  const resueltos = permisos.length - vigentes;
+  const totales = [
+    { label: "Total de Permisos", valor: permisos.length },
+    { label: "Total de Guías", valor: contarUnicos(permisos, "guiaNombre") },
+    { label: "Vigentes", valor: vigentes },
+    { label: "Resueltos", valor: resueltos }
+  ];
+
+  function descargarPDF() {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(14);
+    doc.text("SHOPPING PARIS", 14, 15);
+    doc.setFontSize(11);
+    doc.text("Permisos de salida otorgados", 14, 22);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.text(`Período: ${desde} a ${hasta} — ${filas.length} ${filas.length === 1 ? "registro" : "registros"}`, 14, 28);
+    doc.autoTable({
+      startY: 33,
+      head: [columnas],
+      body: filas,
+      styles: { fontSize: 7.5, cellPadding: 2.5 },
+      headStyles: { fillColor: [31, 78, 120], textColor: 255 },
+      alternateRowStyles: { fillColor: [245, 243, 237] }
+    });
+
+    let y = doc.lastAutoTable.finalY + 10;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.text("Totales", 14, y);
+    y += 6;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    for (const t of totales) {
+      doc.text(`${t.label}: ${t.valor}`, 14, y);
+      y += 6;
+    }
+
+    doc.save(`reporte-permisos-otorgados-${desde}-a-${hasta}.pdf`);
+  }
+
+  return (
+    <Modal titulo="Permisos de salida otorgados" onClose={onClose} ancho="1200px">
+      <p style={{ fontSize: 13, color: "var(--text-muted)", marginTop: -4, marginBottom: 14 }}>
+        Período: {desde} a {hasta} — {filas.length} {filas.length === 1 ? "registro" : "registros"}
+      </p>
+      <div style={{ maxHeight: "55vh", overflow: "auto", marginBottom: 14, border: "1px solid var(--line)", borderRadius: 8 }}>
+        <table className="data-table" style={{ minWidth: "max-content" }}>
+          <thead>
+            <tr>
+              {columnas.map((c) => <th key={c} style={{ whiteSpace: "nowrap" }}>{c}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {filas.length === 0 ? (
+              <tr>
+                <td colSpan={columnas.length} style={{ textAlign: "center", color: "var(--text-muted)", padding: 20 }}>
+                  No se otorgó ningún permiso de salida en este período.
+                </td>
+              </tr>
+            ) : (
+              filas.map((fila, i) => (
+                <tr key={permisos[i].id}>
+                  {fila.map((celda, j) => (
+                    <td key={j} style={{ whiteSpace: "nowrap" }}>
+                      {j === columnas.length - 3 ? (
+                        celda === "Resuelto" ? (
+                          <span className="badge badge-success">Resuelto</span>
+                        ) : (
+                          <span className="badge badge-gold">Vigente</span>
+                        )
+                      ) : (
+                        celda
+                      )}
+                    </td>
+                  ))}
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 10,
+          marginBottom: 18,
+          padding: "12px 14px",
+          background: "var(--paper)",
+          borderRadius: 8
+        }}
+      >
+        {totales.map((t) => (
+          <div key={t.label} style={{ minWidth: 140 }}>
+            <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.03em" }}>
+              {t.label}
+            </div>
+            <div style={{ fontSize: 18, fontWeight: 700 }}>{t.valor}</div>
+          </div>
+        ))}
+      </div>
+
+      <button className="btn btn-primary" style={{ width: "100%" }} onClick={descargarPDF} disabled={filas.length === 0}>
+        Descargar PDF
+      </button>
+    </Modal>
+  );
+}
+
 function ReportesView() {
   const hoy = new Date();
   const [desde, setDesde] = useState(fechaISO(hoy));
   const [hasta, setHasta] = useState(fechaISO(hoy));
   const [visitas, setVisitas] = useState([]);
+  const [permisos, setPermisos] = useState([]);
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState("");
   const [consultado, setConsultado] = useState(false);
@@ -3279,6 +3444,15 @@ function ReportesView() {
         .orderBy("fechaHoraIngreso", "desc")
         .get();
       setVisitas(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+
+      const snapPermisos = await db
+        .collection("permisosSalidaLog")
+        .where("fechaOtorgado", ">=", inicio)
+        .where("fechaOtorgado", "<=", fin)
+        .orderBy("fechaOtorgado", "desc")
+        .get();
+      setPermisos(snapPermisos.docs.map((d) => ({ id: d.id, ...d.data() })));
+
       setConsultado(true);
     } catch (err) {
       console.error(err);
@@ -3402,9 +3576,30 @@ function ReportesView() {
               <div className="stat-value" style={{ color: "var(--alert)" }}>{noLiberadas}</div>
               <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>Ver detalle →</div>
             </div>
+            <div
+              className="stat-card"
+              role="button"
+              tabIndex={0}
+              style={{ cursor: "pointer" }}
+              onClick={() => setReporteAbierto("permisos")}
+              title="Ver detalle de permisos de salida otorgados"
+            >
+              <div className="stat-label">Permisos otorgados</div>
+              <div className="stat-value" style={{ color: "var(--gold)" }}>{permisos.length}</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>Ver detalle →</div>
+            </div>
           </div>
 
-          {reporteAbierto && (
+          {reporteAbierto === "permisos" && (
+            <ModalPermisosOtorgadosDetalle
+              permisos={permisos}
+              desde={desde}
+              hasta={hasta}
+              onClose={() => setReporteAbierto(null)}
+            />
+          )}
+
+          {reporteAbierto && reporteAbierto !== "permisos" && (
             <ModalReporteDetalle
               tipo={reporteAbierto}
               visitas={visitas}
@@ -4736,7 +4931,7 @@ function Shell({ perfil }) {
             {sidebarColapsado ? "⏻" : "Cerrar sesión"}
           </button>
           {!sidebarColapsado && (
-            <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.18</div>
+            <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.19</div>
           )}
         </div>
       </aside>

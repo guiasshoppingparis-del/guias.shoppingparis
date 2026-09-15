@@ -2,6 +2,14 @@
 
 Versionado simplificado `vMAJOR.MINOR`. MAJOR = cambios de arquitectura o que rompen datos existentes. MINOR = funcionalidad nueva incremental.
 
+## v1.19 — 2026-09-07
+
+Informe de permisos de salida otorgados.
+
+- Nueva colección `permisosSalidaLog`: registra cada permiso de salida otorgado de forma **permanente** (guía, empresa, vehículo, motivo, quién autorizó, quién lo otorgó, fecha). A diferencia de la visita (que borra estos datos al reingresar), este log **no se borra** — solo cambia de estado a "Resuelto" y guarda el ticket nuevo y la fecha de reingreso.
+- Nueva tarjeta **"Permisos otorgados"** en Reportes (Sala de Guías), con el mismo esquema que las demás: detalle desplegable, totales (permisos, guías, vigentes, resueltos) y descarga en PDF.
+- Esto permite reportar el histórico completo, incluyendo permisos ya resueltos con el reingreso del guía.
+
 ## v1.18 — 2026-09-07
 
 Total de Pasajeros en el reporte de Vehículos ingresados.
