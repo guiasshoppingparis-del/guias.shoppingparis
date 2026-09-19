@@ -268,7 +268,7 @@ function PanelInicio({ perfil }) {
       </div>
 
       <div className="ticket">
-        <div className="ticket-stub">v1.19</div>
+        <div className="ticket-stub">v1.20</div>
         <div className="ticket-perforation"></div>
         <div className="ticket-body">
           <h2 style={{ fontSize: 16, marginBottom: 6 }}>Versión estable</h2>
@@ -1828,6 +1828,45 @@ async function imprimirPermisoSalida(visita, usuarioNombre, motivos, autorizadoP
   return okLocal;
 }
 
+// ---------------------------------------------------------------------------
+// Impresión directa de reportes (solo totales, sin el detalle línea por línea)
+// ---------------------------------------------------------------------------
+
+function construirLineasReporte(titulo, desde, hasta, totales, desglose, usuarioNombre) {
+  const L = [];
+  L.push({ text: "SHOPPING PARIS", bold: true, big: true, align: "center" });
+  L.push({ text: `Reporte: ${titulo}`, align: "center" });
+  L.push({ text: "--------------------------------", align: "center" });
+  L.push(...filaComprobante("Periodo", `${desde} a ${hasta}`));
+  L.push({ text: " " });
+  totales.forEach((t) => {
+    L.push(...filaComprobante(t.label, t.valor));
+  });
+  if (desglose && desglose.filas.length > 0) {
+    L.push({ text: "--------------------------------", align: "center" });
+    L.push({ text: desglose.titulo, bold: true, align: "center" });
+    desglose.filas.forEach((d) => {
+      L.push(...filaComprobante(d.valor, d.cantidad));
+    });
+  }
+  L.push({ text: "--------------------------------", align: "center" });
+  L.push({ text: `Emitido por: ${usuarioNombre}` });
+  L.push({ text: `${new Date().toLocaleString("es-PY")}` });
+  return L;
+}
+
+// A diferencia del comprobante de liberación o el permiso, el reporte se
+// imprime en una sola copia (es un resumen interno, no un comprobante que
+// se le entrega al guía).
+async function imprimirReporteTicket(titulo, desde, hasta, totales, desglose, usuarioNombre) {
+  const logo = await obtenerLogoBase64ParaTicket();
+  return imprimirDirecto({
+    lines: construirLineasReporte(titulo, desde, hasta, totales, desglose, usuarioNombre),
+    logo,
+    cortar: true
+  });
+}
+
 // Guarda el último ticket liberado en el navegador para poder reimprimirlo más
 // tarde (por ejemplo si la impresora estaba apagada en el momento). Se guarda
 // por unas horas nomás, para no arriesgarse a reimprimir un ticket viejo por error.
@@ -3137,12 +3176,24 @@ const REPORTES_DETALLE_CONFIG = {
   }
 };
 
-function ModalReporteDetalle({ tipo, visitas, desde, hasta, onClose }) {
+function ModalReporteDetalle({ tipo, visitas, desde, hasta, perfil, onClose }) {
   const config = REPORTES_DETALLE_CONFIG[tipo];
   const datos = config.datos(visitas);
   const filas = config.filas(datos);
   const totales = config.totales ? config.totales(datos) : [];
   const desglose = config.desglose ? config.desglose(datos) : null;
+  const [imprimiendoTicket, setImprimiendoTicket] = useState(false);
+  const [errorTicket, setErrorTicket] = useState("");
+
+  async function imprimirTicket() {
+    setImprimiendoTicket(true);
+    setErrorTicket("");
+    const ok = await imprimirReporteTicket(config.titulo, desde, hasta, totales, desglose, perfil.nombre);
+    setImprimiendoTicket(false);
+    if (!ok) {
+      setErrorTicket("No se pudo imprimir. Verificá que el servidor de impresión esté encendido.");
+    }
+  }
 
   function descargarPDF() {
     const { jsPDF } = window.jspdf;
@@ -3258,30 +3309,42 @@ function ModalReporteDetalle({ tipo, visitas, desde, hasta, onClose }) {
         </div>
       )}
 
-      {desglose && desglose.filas.length > 0 && (
-        <div style={{ marginBottom: 18 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>{desglose.titulo}</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            {desglose.filas.map((d) => (
-              <div
-                key={d.valor}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  padding: "6px 12px",
-                  background: "var(--paper)",
-                  borderRadius: 20,
-                  fontSize: 13
-                }}
-              >
-                <span>{d.valor}</span>
-                <span className="badge badge-gold">{d.cantidad}</span>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, marginBottom: 18, flexWrap: "wrap" }}>
+        <div style={{ flex: "1 1 240px" }}>
+          {desglose && desglose.filas.length > 0 && (
+            <React.Fragment>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>{desglose.titulo}</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {desglose.filas.map((d) => (
+                  <div
+                    key={d.valor}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "6px 12px",
+                      background: "var(--paper)",
+                      borderRadius: 20,
+                      fontSize: 13
+                    }}
+                  >
+                    <span>{d.valor}</span>
+                    <span className="badge badge-gold">{d.cantidad}</span>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            </React.Fragment>
+          )}
         </div>
-      )}
+        <div style={{ textAlign: "right" }}>
+          <button className="btn btn-ghost" onClick={imprimirTicket} disabled={imprimiendoTicket || filas.length === 0}>
+            {imprimiendoTicket ? "Imprimiendo..." : "🖨️ Reporte vía Ticket"}
+          </button>
+          {errorTicket && (
+            <p style={{ fontSize: 11, color: "var(--alert)", marginTop: 6, maxWidth: 220 }}>{errorTicket}</p>
+          )}
+        </div>
+      </div>
 
       <button className="btn btn-primary" style={{ width: "100%" }} onClick={descargarPDF} disabled={filas.length === 0}>
         Descargar PDF
@@ -3419,7 +3482,7 @@ function ModalPermisosOtorgadosDetalle({ permisos, desde, hasta, onClose }) {
   );
 }
 
-function ReportesView() {
+function ReportesView({ perfil }) {
   const hoy = new Date();
   const [desde, setDesde] = useState(fechaISO(hoy));
   const [hasta, setHasta] = useState(fechaISO(hoy));
@@ -3605,6 +3668,7 @@ function ReportesView() {
               visitas={visitas}
               desde={desde}
               hasta={hasta}
+              perfil={perfil}
               onClose={() => setReporteAbierto(null)}
             />
           )}
@@ -4822,7 +4886,7 @@ function Shell({ perfil }) {
       return <TiendaView perfil={perfil} mostrarToast={mostrarToast} />;
     }
     if (vista === "reportes" && tienePermiso(perfil, "ver_reportes")) {
-      return <ReportesView />;
+      return <ReportesView perfil={perfil} />;
     }
     if (vista === "reportesTienda" && tienePermiso(perfil, "ver_reportes")) {
       return <ReportesTiendaView />;
@@ -4931,7 +4995,7 @@ function Shell({ perfil }) {
             {sidebarColapsado ? "⏻" : "Cerrar sesión"}
           </button>
           {!sidebarColapsado && (
-            <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.19</div>
+            <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.20</div>
           )}
         </div>
       </aside>

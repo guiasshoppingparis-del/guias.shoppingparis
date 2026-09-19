@@ -2,6 +2,14 @@
 
 Versionado simplificado `vMAJOR.MINOR`. MAJOR = cambios de arquitectura o que rompen datos existentes. MINOR = funcionalidad nueva incremental.
 
+## v1.20 — 2026-09-19
+
+Reporte vía Ticket (impresión directa de totales, sin el detalle).
+
+- En cada detalle desplegable de Reportes (Personas ingresadas, Vehículos ingresados, Liberados, No liberados), nuevo botón **"🖨️ Reporte vía Ticket"** junto al desglose por tipo de vehículo.
+- Imprime directo por la impresora térmica (mismo servidor de impresión que ya usan liberaciones y permisos de salida) — **solo los totales y el desglose**, sin la tabla línea por línea. Una sola copia, con quién lo emitió y cuándo al pie.
+- Si falla la impresión (servidor apagado, etc.), muestra un aviso corto sin romper el resto del reporte — el PDF sigue disponible igual.
+
 ## v1.19 — 2026-09-07
 
 Informe de permisos de salida otorgados.
