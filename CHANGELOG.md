@@ -2,6 +2,12 @@
 
 Versionado simplificado `vMAJOR.MINOR`. MAJOR = cambios de arquitectura o que rompen datos existentes. MINOR = funcionalidad nueva incremental.
 
+## v1.21 — 2026-09-19
+
+Permisos otorgados en el Reporte vía Ticket.
+
+- El botón "🖨️ Reporte vía Ticket" ahora suma también el total de **"Permisos otorgados"** del mismo período consultado, al final de los totales — solo en el ticket impreso (no se agregó a la vista en pantalla ni al PDF, tal como se pidió).
+
 ## v1.20 — 2026-09-19
 
 Reporte vía Ticket (impresión directa de totales, sin el detalle).
