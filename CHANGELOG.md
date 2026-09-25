@@ -2,6 +2,12 @@
 
 Versionado simplificado `vMAJOR.MINOR`. MAJOR = cambios de arquitectura o que rompen datos existentes. MINOR = funcionalidad nueva incremental.
 
+## v1.22 — 2026-09-19
+
+Línea "Total de Tickets+Permiso" en el Reporte vía Ticket.
+
+- El ticket impreso ahora suma una línea final **"Total de Tickets+Permiso"**: el total de tickets de la categoría consultada (Vehículos, Liberados o No liberados) más la cantidad de Permisos otorgados del período. En "Personas ingresadas" (que no tiene un total de tickets propio, al estar agrupado por guía) se usa la cantidad de guías como base.
+
 ## v1.21 — 2026-09-19
 
 Permisos otorgados en el Reporte vía Ticket.

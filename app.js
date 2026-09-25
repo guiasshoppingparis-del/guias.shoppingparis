@@ -268,7 +268,7 @@ function PanelInicio({ perfil }) {
       </div>
 
       <div className="ticket">
-        <div className="ticket-stub">v1.21</div>
+        <div className="ticket-stub">v1.22</div>
         <div className="ticket-perforation"></div>
         <div className="ticket-body">
           <h2 style={{ fontSize: 16, marginBottom: 6 }}>Versión estable</h2>
@@ -3188,10 +3188,19 @@ function ModalReporteDetalle({ tipo, visitas, permisos, desde, hasta, perfil, on
   async function imprimirTicket() {
     setImprimiendoTicket(true);
     setErrorTicket("");
-    // El ticket suma "Permisos otorgados" al final, aparte de los totales
-    // propios de la categoría (no se muestra en pantalla ni en el PDF, solo
-    // en el ticket impreso, tal como se pidió).
-    const totalesTicket = [...totales, { label: "Permisos otorgados", valor: (permisos || []).length }];
+    // El ticket suma dos líneas extra al final, aparte de los totales propios
+    // de la categoría (no se muestran en pantalla ni en el PDF, solo en el
+    // ticket impreso, tal como se pidió): la cantidad de permisos otorgados
+    // en el período, y el total de tickets de esta categoría sumado a esos
+    // permisos (cada permiso implica un ticket más al reingresar el guía).
+    const cantPermisos = (permisos || []).length;
+    const totalTicketsEntry = totales.find((t) => t.label === "Total de Tickets");
+    const baseTickets = totalTicketsEntry ? Number(totalTicketsEntry.valor) || 0 : datos.length;
+    const totalesTicket = [
+      ...totales,
+      { label: "Permisos otorgados", valor: cantPermisos },
+      { label: "Total de Tickets+Permiso", valor: baseTickets + cantPermisos }
+    ];
     const ok = await imprimirReporteTicket(config.titulo, desde, hasta, totalesTicket, desglose, perfil.nombre);
     setImprimiendoTicket(false);
     if (!ok) {
@@ -5000,7 +5009,7 @@ function Shell({ perfil }) {
             {sidebarColapsado ? "⏻" : "Cerrar sesión"}
           </button>
           {!sidebarColapsado && (
-            <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.21</div>
+            <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.22</div>
           )}
         </div>
       </aside>
