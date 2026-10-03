@@ -66,7 +66,8 @@ const ROLES_POR_DEFECTO = [
       "gestionar_catalogos",
       "registrar_visitas",
       "liberar_estacionamiento",
-      "ver_reportes"
+      "ver_reportes",
+      "editar_visitas_cerradas"
     ]
   },
   {
@@ -87,7 +88,8 @@ const PERMISOS_DISPONIBLES = [
   { id: "gestionar_catalogos", label: "Gestionar empresas y tipos de vehículo" },
   { id: "registrar_visitas", label: "Registrar ingreso de visitas" },
   { id: "liberar_estacionamiento", label: "Liberar estacionamiento" },
-  { id: "ver_reportes", label: "Ver reportes" }
+  { id: "ver_reportes", label: "Ver reportes" },
+  { id: "editar_visitas_cerradas", label: "Editar visitas ya liberadas / no liberadas" }
 ];
 
 // Mismo motivo que arriba: se exponen explícitamente en window.

@@ -802,6 +802,7 @@ function VisitasView({ perfil, mostrarToast }) {
         guias={guias}
         empresas={empresas}
         tiposVehiculo={tiposVehiculo}
+        visitasEnCurso={visitasEnCurso}
         perfil={perfil}
         mostrarToast={mostrarToast}
       />
@@ -992,7 +993,7 @@ function horaActualHHMM() {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-function FormularioVisita({ guias, empresas, tiposVehiculo, perfil, mostrarToast }) {
+function FormularioVisita({ guias, empresas, tiposVehiculo, visitasEnCurso, perfil, mostrarToast }) {
   const [nombreGuia, setNombreGuia] = useState("");
   const [guiaSeleccionado, setGuiaSeleccionado] = useState(null);
   const [mostrarSugerencias, setMostrarSugerencias] = useState(false);
@@ -1040,6 +1041,22 @@ function FormularioVisita({ guias, empresas, tiposVehiculo, perfil, mostrarToast
       setError("Completá todos los campos para registrar el ingreso.");
       return;
     }
+
+    // No se permite registrar un ingreso con un N° de ticket que ya está en
+    // uso por otra visita en curso (suele ser un error de tipeo o el ticket
+    // equivocado). Se compara sin importar mayúsculas/espacios.
+    const ticketNormalizado = ticket.trim().toUpperCase();
+    const duplicado = (visitasEnCurso || []).find(
+      (v) => (v.ticketEstacionamiento || "").trim().toUpperCase() === ticketNormalizado
+    );
+    if (duplicado) {
+      setError(
+        `Ya hay una visita en curso con el ticket "${ticketNormalizado}" (guía: ${duplicado.guiaNombre}). ` +
+          "Verificá el número de ticket o cerrá esa visita antes de registrar una nueva."
+      );
+      return;
+    }
+
     setCargando(true);
     try {
       let guiaId = guiaSeleccionado ? guiaSeleccionado.id : null;
@@ -3176,7 +3193,178 @@ const REPORTES_DETALLE_CONFIG = {
   }
 };
 
-function ModalReporteDetalle({ tipo, visitas, permisos, desde, hasta, perfil, onClose }) {
+// ---------------------------------------------------------------------------
+// Edición de una visita ya cerrada (liberada o no liberada)
+// ---------------------------------------------------------------------------
+// Pensado para corregir errores de carga una vez cerrada la visita (dato mal
+// tipeado, estado equivocado al cerrar el día, etc.). Solo accesible con el
+// permiso "editar_visitas_cerradas" (Admin por defecto). No reimprime tickets
+// ni reasigna números de liberación/permiso: es una corrección del registro.
+const ESTADOS_VISITA_EDITABLES = [
+  { id: "en_curso", label: "En curso" },
+  { id: "liberado", label: "Liberado" },
+  { id: "no_liberado", label: "No liberado" }
+];
+
+function ModalEditarVisitaCerrada({ visita, empresas, tiposVehiculo, perfil, onClose, onGuardado }) {
+  const [nombreGuia, setNombreGuia] = useState(visita.guiaNombre || "");
+  const [empresaId, setEmpresaId] = useState(visita.empresaId || "");
+  const [vehiculoTipoId, setVehiculoTipoId] = useState(visita.vehiculoTipoId || "");
+  const [chapa, setChapa] = useState(visita.chapa || "");
+  const [ticket, setTicket] = useState(visita.ticketEstacionamiento || "");
+  const [cantPasajeros, setCantPasajeros] = useState(visita.cantPasajeros || "");
+  const [montoAcumulado, setMontoAcumulado] = useState(
+    visita.montoAcumulado !== undefined && visita.montoAcumulado !== null ? String(visita.montoAcumulado) : "0"
+  );
+  const [estado, setEstado] = useState(visita.estado || "en_curso");
+  const [cargando, setCargando] = useState(false);
+  const [error, setError] = useState("");
+
+  async function guardar(e) {
+    e.preventDefault();
+    if (!nombreGuia.trim() || !empresaId || !vehiculoTipoId || !chapa.trim() || !ticket.trim() || !cantPasajeros) {
+      setError("Completá todos los campos obligatorios.");
+      return;
+    }
+    setError("");
+    setCargando(true);
+    try {
+      const empresa = empresas.find((e) => e.id === empresaId);
+      const tipoVehiculo = tiposVehiculo.find((t) => t.id === vehiculoTipoId);
+
+      const cambios = {
+        guiaNombre: nombreGuia.trim(),
+        empresaId,
+        empresaNombre: empresa ? empresa.nombre : "",
+        vehiculoTipoId,
+        vehiculoTipoNombre: tipoVehiculo ? tipoVehiculo.nombre : "",
+        montoMinimoRequerido: tipoVehiculo ? Number(tipoVehiculo.montoMinimoCompra) || 0 : visita.montoMinimoRequerido || 0,
+        chapa: chapa.trim().toUpperCase(),
+        ticketEstacionamiento: ticket.trim(),
+        cantPasajeros: Number(cantPasajeros),
+        montoAcumulado: Number(montoAcumulado) || 0,
+        estado,
+        editadoPorId: perfil ? perfil.id : null,
+        editadoPorNombre: perfil ? perfil.nombre : null,
+        editadoEn: firebase.firestore.FieldValue.serverTimestamp()
+      };
+
+      // Si cambia el estado, mantenemos la fecha de salida coherente: se
+      // limpia al volver a "en_curso" y se completa (si faltaba) al pasar a
+      // liberado/no liberado.
+      if (estado !== visita.estado) {
+        if (estado === "en_curso") {
+          cambios.fechaHoraSalida = firebase.firestore.FieldValue.delete();
+        } else if (!visita.fechaHoraSalida) {
+          cambios.fechaHoraSalida = firebase.firestore.Timestamp.now();
+        }
+      }
+
+      await db.collection("visitas").doc(visita.id).update(cambios);
+
+      onGuardado({
+        ...visita,
+        ...cambios,
+        editadoEn: { seconds: Math.floor(Date.now() / 1000) },
+        fechaHoraSalida:
+          cambios.fechaHoraSalida === undefined
+            ? visita.fechaHoraSalida
+            : estado === "en_curso"
+              ? null
+              : cambios.fechaHoraSalida
+      });
+    } catch (err) {
+      console.error(err);
+      setError("No se pudo guardar el cambio. Probá de nuevo.");
+    } finally {
+      setCargando(false);
+    }
+  }
+
+  return (
+    <Modal
+      titulo={`Editar visita — ${visita.guiaNombre || ""}`}
+      onClose={onClose}
+      footer={
+        <React.Fragment>
+          <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-gold" onClick={guardar} disabled={cargando}>
+            {cargando ? "Guardando..." : "Guardar cambios"}
+          </button>
+        </React.Fragment>
+      }
+    >
+      {error && <div className="form-error">{error}</div>}
+      <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: -4, marginBottom: 14 }}>
+        Esta edición corrige el registro de una visita ya cerrada. No reimprime tickets ni reasigna números de
+        liberación o permiso.
+      </p>
+      <form onSubmit={guardar}>
+        <div className="field">
+          <label>Guía</label>
+          <input value={nombreGuia} onChange={(e) => setNombreGuia(e.target.value.toUpperCase())} required />
+        </div>
+        <div className="field-row">
+          <div className="field">
+            <label>Empresa</label>
+            <select value={empresaId} onChange={(e) => setEmpresaId(e.target.value)} required>
+              <option value="">Seleccionar…</option>
+              {empresas.map((emp) => (
+                <option key={emp.id} value={emp.id}>{emp.nombre}</option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label>Cantidad de pasajeros</label>
+            <input type="number" min="1" value={cantPasajeros} onChange={(e) => setCantPasajeros(e.target.value)} required />
+          </div>
+        </div>
+        <div className="field-row">
+          <div className="field">
+            <label>Tipo de vehículo</label>
+            <select value={vehiculoTipoId} onChange={(e) => setVehiculoTipoId(e.target.value)} required>
+              <option value="">Seleccionar…</option>
+              {tiposVehiculo.map((t) => (
+                <option key={t.id} value={t.id}>{t.nombre}</option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label>Chapa</label>
+            <input value={chapa} onChange={(e) => setChapa(e.target.value.toUpperCase())} required />
+          </div>
+        </div>
+        <div className="field-row">
+          <div className="field">
+            <label>Ticket de estacionamiento</label>
+            <input value={ticket} onChange={(e) => setTicket(e.target.value.toUpperCase())} required />
+          </div>
+          <div className="field">
+            <label>Monto acumulado</label>
+            <input type="number" min="0" step="0.01" value={montoAcumulado} onChange={(e) => setMontoAcumulado(e.target.value)} />
+          </div>
+        </div>
+        <div className="field">
+          <label>Estado</label>
+          <select value={estado} onChange={(e) => setEstado(e.target.value)} required>
+            {ESTADOS_VISITA_EDITABLES.map((o) => (
+              <option key={o.id} value={o.id}>{o.label}</option>
+            ))}
+          </select>
+          {estado !== visita.estado && (
+            <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
+              {estado === "en_curso"
+                ? "La visita volverá a aparecer en \"Visitas en curso\"."
+                : "Se completará la fecha de salida si no la tenía."}
+            </p>
+          )}
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function ModalReporteDetalle({ tipo, visitas, permisos, desde, hasta, perfil, empresas, tiposVehiculo, onVisitaActualizada, onClose }) {
   const config = REPORTES_DETALLE_CONFIG[tipo];
   const datos = config.datos(visitas);
   const filas = config.filas(datos);
@@ -3184,6 +3372,13 @@ function ModalReporteDetalle({ tipo, visitas, permisos, desde, hasta, perfil, on
   const desglose = config.desglose ? config.desglose(datos) : null;
   const [imprimiendoTicket, setImprimiendoTicket] = useState(false);
   const [errorTicket, setErrorTicket] = useState("");
+  const [visitaEditando, setVisitaEditando] = useState(null);
+
+  // Editar una visita ya cerrada (liberada o no liberada) es algo que solo
+  // tiene sentido en estos dos reportes, y solo para quien tenga el permiso
+  // puntual (pensado para corregir errores de carga, no para el uso diario).
+  const puedeEditarCerradas =
+    (tipo === "liberados" || tipo === "no_liberados") && tienePermiso(perfil, "editar_visitas_cerradas");
 
   async function imprimirTicket() {
     setImprimiendoTicket(true);
@@ -3279,25 +3474,52 @@ function ModalReporteDetalle({ tipo, visitas, permisos, desde, hasta, perfil, on
           <thead>
             <tr>
               {config.columnas.map((c) => <th key={c} style={{ whiteSpace: "nowrap" }}>{c}</th>)}
+              {puedeEditarCerradas && <th style={{ whiteSpace: "nowrap" }}></th>}
             </tr>
           </thead>
           <tbody>
             {filas.length === 0 ? (
               <tr>
-                <td colSpan={config.columnas.length} style={{ textAlign: "center", color: "var(--text-muted)", padding: 20 }}>
+                <td colSpan={config.columnas.length + (puedeEditarCerradas ? 1 : 0)} style={{ textAlign: "center", color: "var(--text-muted)", padding: 20 }}>
                   Sin registros en este período.
                 </td>
               </tr>
             ) : (
               filas.map((fila, i) => (
-                <tr key={i}>
+                <tr key={datos[i] ? datos[i].id : i}>
                   {fila.map((celda, j) => <td key={j} style={{ whiteSpace: "nowrap" }}>{celda}</td>)}
+                  {puedeEditarCerradas && (
+                    <td style={{ whiteSpace: "nowrap" }}>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        style={{ padding: "4px 10px", fontSize: 12 }}
+                        onClick={() => setVisitaEditando(datos[i])}
+                      >
+                        Editar
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))
             )}
           </tbody>
         </table>
       </div>
+
+      {visitaEditando && (
+        <ModalEditarVisitaCerrada
+          visita={visitaEditando}
+          empresas={empresas}
+          tiposVehiculo={tiposVehiculo}
+          perfil={perfil}
+          onClose={() => setVisitaEditando(null)}
+          onGuardado={(visitaActualizada) => {
+            setVisitaEditando(null);
+            if (onVisitaActualizada) onVisitaActualizada(visitaActualizada);
+          }}
+        />
+      )}
 
       {totales.length > 0 && (
         <div
@@ -3505,6 +3727,30 @@ function ReportesView({ perfil }) {
   const [error, setError] = useState("");
   const [consultado, setConsultado] = useState(false);
   const [reporteAbierto, setReporteAbierto] = useState(null);
+  const [empresas, setEmpresas] = useState([]);
+  const [tiposVehiculo, setTiposVehiculo] = useState([]);
+
+  // Catálogos para el formulario de edición de visitas cerradas (solo se
+  // usan si el perfil tiene el permiso correspondiente, pero es liviano
+  // cargarlos siempre junto con el resto del reporte).
+  useEffect(() => {
+    const u1 = db.collection("empresas").orderBy("nombre").onSnapshot((s) =>
+      setEmpresas(s.docs.map((d) => ({ id: d.id, ...d.data() })).filter((e) => e.activo !== false))
+    );
+    const u2 = db.collection("tiposVehiculo").orderBy("nombre").onSnapshot((s) =>
+      setTiposVehiculo(s.docs.map((d) => ({ id: d.id, ...d.data() })).filter((t) => t.activo !== false))
+    );
+    return () => {
+      u1();
+      u2();
+    };
+  }, []);
+
+  // Refleja en el reporte ya cargado (consulta puntual, no en vivo) el
+  // cambio hecho desde el modal de edición de una visita cerrada.
+  function actualizarVisitaLocal(visitaActualizada) {
+    setVisitas((prev) => prev.map((v) => (v.id === visitaActualizada.id ? visitaActualizada : v)));
+  }
 
   async function consultar(e) {
     if (e) e.preventDefault();
@@ -3683,6 +3929,9 @@ function ReportesView({ perfil }) {
               desde={desde}
               hasta={hasta}
               perfil={perfil}
+              empresas={empresas}
+              tiposVehiculo={tiposVehiculo}
+              onVisitaActualizada={actualizarVisitaLocal}
               onClose={() => setReporteAbierto(null)}
             />
           )}

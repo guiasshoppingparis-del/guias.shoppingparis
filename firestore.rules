@@ -49,8 +49,17 @@ service cloud.firestore {
     match /visitas/{visitaId} {
       allow read: if estaLogueado();
       allow create: if estaLogueado() && tienePermiso('registrar_visitas');
+      // Mientras la visita sigue "en_curso" (cargar compras, reingreso,
+      // liberar/no liberar al cerrar el día), el criterio es el de siempre.
+      // Una vez cerrada (liberado / no_liberado), solo se puede volver a
+      // tocar ese documento con el permiso puntual "editar_visitas_cerradas"
+      // (pensado para corregir errores de carga, no para el uso diario).
       allow update: if estaLogueado()
-        && (tienePermiso('registrar_visitas') || tienePermiso('liberar_estacionamiento'));
+        && (
+          (resource.data.estado == 'en_curso'
+            && (tienePermiso('registrar_visitas') || tienePermiso('liberar_estacionamiento')))
+          || tienePermiso('editar_visitas_cerradas')
+        );
       // Corregido: el botón "Anular visita" de la interfaz es visible para
       // quien tiene "registrar_visitas" (Encargado de Sala), no solo Admin.
       allow delete: if estaLogueado()

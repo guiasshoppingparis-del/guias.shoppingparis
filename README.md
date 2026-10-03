@@ -2,7 +2,7 @@
 
 Gestión de guías de turismo, visitas y liberación de estacionamiento en la sala VIP de guías.
 
-**Versión actual: v1.0** — Sistema completo y estable.
+**Versión actual: v1.23** — Sistema completo y estable.
 Ver `CHANGELOG.md` para el detalle de todas las versiones.
 
 ---
@@ -25,7 +25,7 @@ El Admin puede crear roles nuevos o editar los permisos de estos desde **Usuario
 
 ### Flujo de trabajo típico (Encargado de Sala)
 
-1. **Ingreso del guía**: en "Visitas", completar el formulario (guía, empresa, pasajeros, vehículo, chapa, N° de ticket) → "Registrar ingreso". El guía queda visible en "Visitas en curso".
+1. **Ingreso del guía**: en "Visitas", completar el formulario (guía, empresa, pasajeros, vehículo, chapa, N° de ticket) → "Registrar ingreso". El guía queda visible en "Visitas en curso". Si el N° de ticket ya está en uso por otra visita en curso, el sistema rechaza el registro y avisa quién lo tiene (evita cargar el mismo ticket dos veces por error).
 2. **A medida que trae comprobantes de compra**: abrir la tarjeta del guía → "Registrar compra" → cargar el monto → "Agregar". La barra de progreso muestra cuánto falta para el mínimo.
 3. **Al llegar al mínimo**: el botón cambia a "Liberar estacionamiento". Al apretarlo, se descarga automáticamente el PDF con el comprobante para el guía.
 4. **Si el guía se carga mal** (error de tipeo, vehículo equivocado, etc.): usar el botón "✕" en la tarjeta para anular la visita — no se puede deshacer.
@@ -35,6 +35,7 @@ El Admin puede crear roles nuevos o editar los permisos de estos desde **Usuario
 
 - **Nombre de un guía mal escrito**: pantalla "Guías" → Editar. Si tiene una visita abierta en ese momento, se actualiza sola.
 - **Empresas / Tipos de vehículo**: se administran desde sus pantallas correspondientes (solo Admin / rol con permiso de catálogos). Ahí también se configura el **monto mínimo de compra** por tipo de vehículo.
+- **Visita ya liberada o no liberada con un dato mal cargado**: en Reportes, abrir el detalle "Liberados" o "No liberados" del período correspondiente → botón "Editar" en la fila. Permite corregir guía, empresa, vehículo, chapa, ticket, pasajeros y monto acumulado, y si hace falta revertir el estado (por ejemplo volver a "En curso"). Requiere el permiso `editar_visitas_cerradas` (solo Admin por defecto) y queda registrado quién hizo el último cambio.
 
 ### Reportes y análisis (Admin / rol con permiso de reportes)
 
@@ -102,7 +103,7 @@ Abrir `http://localhost:8000`.
 
 ## Permisos disponibles
 
-`gestionar_usuarios`, `gestionar_catalogos`, `registrar_visitas`, `liberar_estacionamiento`, `ver_reportes`.
+`gestionar_usuarios`, `gestionar_catalogos`, `registrar_visitas`, `liberar_estacionamiento`, `ver_reportes`, `editar_visitas_cerradas` (corregir una visita ya liberada/no liberada, incluido revertir el estado; solo Admin por defecto).
 
 ## Notas importantes
 

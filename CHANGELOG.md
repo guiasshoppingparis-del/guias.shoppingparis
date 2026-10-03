@@ -2,6 +2,14 @@
 
 Versionado simplificado `vMAJOR.MINOR`. MAJOR = cambios de arquitectura o que rompen datos existentes. MINOR = funcionalidad nueva incremental.
 
+## v1.23 — 2026-10-02
+
+Bloqueo de tickets duplicados + edición de visitas cerradas.
+
+- **Registrar ingreso** ahora rechaza un N° de ticket de estacionamiento que ya está en uso por otra visita en curso (comparación sin importar mayúsculas/espacios), mostrando quién lo tiene y bloqueando el registro hasta que se corrija.
+- Nuevo permiso **`editar_visitas_cerradas`** (solo Admin por defecto, configurable como cualquier otro permiso desde Usuarios y roles). Quien lo tenga ve un botón "Editar" en los detalles de Reportes → **Liberados** y **No liberados**.
+- La edición permite corregir guía, empresa, tipo de vehículo, chapa, ticket, pasajeros, monto acumulado y, si hace falta, **revertir el estado** (volver a En curso, o cambiar entre Liberado / No liberado) — pensado para corregir errores de carga, no para el flujo diario. No reimprime tickets ni reasigna números de liberación/permiso. Queda registrado quién hizo la última edición y cuándo.
+
 ## v1.22 — 2026-09-19
 
 Línea "Total de Tickets+Permiso" en el Reporte vía Ticket.
