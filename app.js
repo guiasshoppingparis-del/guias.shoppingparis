@@ -268,7 +268,7 @@ function PanelInicio({ perfil }) {
       </div>
 
       <div className="ticket">
-        <div className="ticket-stub">v1.22</div>
+        <div className="ticket-stub">v1.23</div>
         <div className="ticket-perforation"></div>
         <div className="ticket-body">
           <h2 style={{ fontSize: 16, marginBottom: 6 }}>Versión estable</h2>
@@ -5258,7 +5258,7 @@ function Shell({ perfil }) {
             {sidebarColapsado ? "⏻" : "Cerrar sesión"}
           </button>
           {!sidebarColapsado && (
-            <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.22</div>
+            <div style={{ fontSize: 11, color: "rgba(240, 238, 232, 0.35)", marginTop: 10 }}>v1.23</div>
           )}
         </div>
       </aside>
